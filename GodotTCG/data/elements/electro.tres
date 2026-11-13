@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ElementData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/cards/element_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"Electro"
+display_name = "Electro"
+color = Color(0.760784, 0.517647, 1, 1)
+light_color = Color(0.909804, 0.784314, 1, 1)
+dark_color = Color(0.227451, 0.133333, 0.345098, 1)
+can_attach = true
+shape_tag = "bolt"
+

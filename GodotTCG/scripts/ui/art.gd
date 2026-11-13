@@ -247,7 +247,8 @@ static func draw_status_badge(
 ) -> void:
 	var c := rect.get_center()
 	var r: float = minf(rect.size.x, rect.size.y) * 0.5 - 1.0
-	var col := TCGTheme.elem_color(elem) if TCGTheme.ELEM_COL.has(elem) else TCGTheme.GOLD
+	var ed := ElementDB.get_element(elem)
+	var col := ed.color if (ed != null and String(ed.id) == elem) else TCGTheme.GOLD
 	canvas.draw_circle(c, r, Color8(24, 34, 48))
 	canvas.draw_arc(c, r, 0.0, TAU, 20, col, 2.0)
 
@@ -493,7 +494,7 @@ static func draw_card_back(canvas: CanvasItem, rect: Rect2) -> void:
 	draw_elem_symbol(canvas, "Omni", c, r, TCGTheme.GOLD_L, false)
 
 
-static func draw_mat(canvas: CanvasItem, size: Vector2) -> void:
+static func draw_mat(canvas: CanvasItem, size: Vector2, shimmer_t: float = 0.0, table_rect_override: Rect2 = Rect2()) -> void:
 	var w: float = size.x
 	var h: float = size.y
 	# Outer dark wood / stone background
@@ -505,11 +506,18 @@ static func draw_mat(canvas: CanvasItem, size: Vector2) -> void:
 		var c := TCGTheme.mix(Color8(26, 42, 60), Color8(11, 18, 28), t * 0.85)
 		canvas.draw_rect(Rect2(0, y0, w, y1 - y0 + 2.0), c)
 
-	# Recessed playing table
-	var table := Rect2(180, 66, w - 360, h - 132)
+	# Recessed playing table (scales responsively for 16:9, 19.5:9, 4:3)
+	var safe: Rect2 = UIConstants.get_safe_rect(size)
+	var pad_x: float = clampf(safe.size.x * 0.132, 180.0, 255.0)
+	var table := table_rect_override if table_rect_override.size.x > 10.0 else Rect2(
+		safe.position.x + pad_x,
+		safe.position.y + safe.size.y * 0.056,
+		maxf(520.0, safe.size.x - pad_x * 2.0),
+		maxf(400.0, safe.size.y * 0.715)
+	)
 	TCGTheme.draw_rounded_box(
 		canvas,
-		table.grow(8),
+		table.grow(10),
 		Color8(48, 34, 22),
 		TCGTheme.GOLD_D,
 		18,
@@ -520,45 +528,75 @@ static func draw_mat(canvas: CanvasItem, size: Vector2) -> void:
 	TCGTheme.draw_rounded_box(
 		canvas,
 		table,
-		Color8(22, 38, 54),
+		Color8(21, 36, 52),
 		TCGTheme.GOLD,
 		14,
 		2
 	)
+	# Subtle double-bezel inner gold filigree
+	var inner_frame := table.grow(-6.0)
+	var inner_sb := StyleBoxFlat.new()
+	inner_sb.bg_color = Color(0, 0, 0, 0)
+	inner_sb.border_color = Color(TCGTheme.GOLD_D.r, TCGTheme.GOLD_D.g, TCGTheme.GOLD_D.b, 0.55)
+	inner_sb.set_border_width_all(1)
+	inner_sb.set_corner_radius_all(10)
+	canvas.draw_style_box(inner_sb, inner_frame)
 
-	# Subtle diamond stone tiling inside table
-	var tile_col := Color8(27, 45, 64)
-	var step_x: int = 64
-	var step_y: int = 40
-	var x: float = table.position.x + 28.0
-	while x < table.end.x - 20.0:
-		var y: float = table.position.y + 24.0
-		while y < table.end.y - 20.0:
+	# Ornamental felt diamond weave inside table
+	var tile_col := Color8(26, 44, 63)
+	var weave_col := Color(0.18, 0.28, 0.38, 0.24)
+	var step_x: float = 72.0
+	var step_y: float = 46.0
+	var x: float = table.position.x + 32.0
+	var row_shift: bool = false
+	while x < table.end.x - 24.0:
+		var y: float = table.position.y + 28.0 + (step_y * 0.5 if row_shift else 0.0)
+		while y < table.end.y - 24.0:
 			var pts := PackedVector2Array([
-				Vector2(x, y - 10),
-				Vector2(x + 16, y),
-				Vector2(x, y + 10),
-				Vector2(x - 16, y),
-				Vector2(x, y - 10),
+				Vector2(x, y - 11.0),
+				Vector2(x + 17.0, y),
+				Vector2(x, y + 11.0),
+				Vector2(x - 17.0, y),
+				Vector2(x, y - 11.0),
 			])
 			canvas.draw_polyline(pts, tile_col, 1.0)
+			canvas.draw_circle(Vector2(x, y), 1.6, weave_col)
 			y += step_y
 		x += step_x
+		row_shift = not row_shift
 
-	# Center elemental dueling line & ring
-	var mid_y: float = h * 0.5 - 5.0
+	# Slow ambient shimmer band drifting obliquely across the felt (T2.2)
+	if shimmer_t > 0.0:
+		var sweep: float = fmod(shimmer_t * 0.09, 1.4) - 0.2
+		var sx: float = lerpf(table.position.x, table.end.x, sweep)
+		var band_pts := PackedVector2Array([
+			Vector2(sx - 90.0, table.position.y + 6.0),
+			Vector2(sx + 40.0, table.position.y + 6.0),
+			Vector2(sx - 60.0, table.end.y - 6.0),
+			Vector2(sx - 190.0, table.end.y - 6.0),
+		])
+		canvas.draw_colored_polygon(band_pts, Color(0.85, 0.90, 1.0, 0.028))
+
+	# Subtle perimeter vignette around felt edges
+	var vig_w: float = 28.0
+	canvas.draw_rect(Rect2(table.position.x + 2, table.position.y + 2, table.size.x - 4, vig_w), Color(0, 0, 0, 0.16))
+	canvas.draw_rect(Rect2(table.position.x + 2, table.end.y - vig_w - 2, table.size.x - 4, vig_w), Color(0, 0, 0, 0.20))
+
+	# Center elemental dueling line & Teyvat rosette emblem
+	var mid_y: float = table.get_center().y
 	canvas.draw_line(
 		Vector2(table.position.x + 24, mid_y),
 		Vector2(table.end.x - 24, mid_y),
 		TCGTheme.GOLD_D,
 		2.0
 	)
-	var center := Vector2(w * 0.5, mid_y)
-	canvas.draw_circle(center, 44.0, Color8(18, 30, 44))
-	canvas.draw_arc(center, 44.0, 0.0, TAU, 32, TCGTheme.GOLD, 2.0)
-	canvas.draw_arc(center, 36.0, 0.0, TAU, 28, TCGTheme.GOLD_D, 1.0)
-	var elems: Array[String] = ["Pyro", "Hydro", "Anemo", "Electro", "Cryo", "Geo"]
+	var center := Vector2(table.get_center().x, mid_y)
+	canvas.draw_circle(center, 58.0, Color8(16, 28, 42))
+	canvas.draw_arc(center, 58.0, 0.0, TAU, 40, TCGTheme.GOLD, 2.0)
+	canvas.draw_arc(center, 46.0, 0.0, TAU, 36, TCGTheme.GOLD_D, 1.2)
+	draw_elem_symbol(canvas, "Omni", center, 16.0, Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.28), false)
+	var elems: PackedStringArray = ElementDB.CORE_ELEMENTS
 	for i in range(elems.size()):
-		var a: float = float(i) * PI / 3.0 - PI / 2.0
-		var ep := Vector2(center.x + cos(a) * 24.0, center.y + sin(a) * 24.0)
-		canvas.draw_circle(ep, 4.0, TCGTheme.elem_color(elems[i]))
+		var a: float = float(i) * PI / 3.0 - PI / 2.0 + shimmer_t * 0.03
+		var ep := Vector2(center.x + cos(a) * 34.0, center.y + sin(a) * 34.0)
+		canvas.draw_circle(ep, 4.5, ElementDB.get_color(elems[i]))

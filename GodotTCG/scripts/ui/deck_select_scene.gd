@@ -147,7 +147,7 @@ func _gui_input(event: InputEvent) -> void:
 					accept_event()
 					return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			var col: int = 0 if event.position.x < float(TCGTheme.W) * 0.5 else 1
+			var col: int = 0 if event.position.x < maxf(size.x, float(TCGTheme.W)) * 0.5 else 1
 			var delta_s: int = -1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1
 			var max_scroll: int = maxi(0, entries.size() - VISIBLE_ROWS)
 			scroll[col] = clampi(scroll[col] + delta_s, 0, max_scroll)
@@ -176,6 +176,7 @@ func _draw() -> void:
 	_hit_boxes.clear()
 	var w: float = maxf(size.x, float(TCGTheme.W))
 	var h: float = maxf(size.y, float(TCGTheme.H))
+	var safe := UIConstants.get_safe_rect(Vector2(w, h))
 	TCGArt.draw_mat(self, Vector2(w, h))
 	draw_rect(Rect2(0, 0, w, h), Color(0.03, 0.05, 0.09, 0.45))
 
@@ -184,18 +185,29 @@ func _draw() -> void:
 		mode_title = "Human vs Human"
 	elif mode_id == "ava":
 		mode_title = "AI vs AI"
-	TCGTheme.draw_text_centered(self, mode_title, Vector2(float(TCGTheme.W) * 0.5, 42.0), 34, TCGTheme.GOLD, true, true)
+	TCGTheme.draw_text_centered(self, mode_title, Vector2(safe.get_center().x, safe.position.y + 44.0), UIConstants.FONT_TITLE - 4, TCGTheme.GOLD, true, true)
+
+	var col_w: float = clampf((safe.size.x - 140.0) * 0.5, 560.0, 820.0)
+	var col_gap: float = maxf(44.0, safe.size.x - col_w * 2.0 - 40.0)
+	var start_x: float = safe.get_center().x - col_w - col_gap * 0.5
+	var top_y: float = safe.position.y + 98.0
+	var row_h: float = 48.0
+	var row_step: float = 54.0
+	var preview_y: float = top_y + 48.0 + float(VISIBLE_ROWS) * row_step + 18.0
+	var card_h: float = clampf(safe.end.y - 104.0 - preview_y, 140.0, 220.0)
+	var card_w: float = roundf(card_h * 0.78)
+	var card_gap: float = (col_w - card_w * 3.0) / 4.0
 
 	for p in range(2):
-		var x0: float = 60.0 + float(p) * 600.0
-		TCGTheme.draw_text_pos(self, titles[p], Vector2(x0, 100.0), 22, TCGTheme.TEXT, true, true)
+		var x0: float = start_x + float(p) * (col_w + col_gap)
+		TCGTheme.draw_text_pos(self, titles[p], Vector2(x0, top_y), UIConstants.FONT_HEADER + 2, TCGTheme.TEXT, true, true)
 
 		if mode_id == "ava" or (mode_id == "pve" and p == 1):
-			TCGTheme.draw_text_pos(self, "AI level", Vector2(x0 + 258.0, 103.0), 14, TCGTheme.DIM, false, true)
+			TCGTheme.draw_text_pos(self, "AI level", Vector2(x0 + col_w - 320.0, top_y + 6.0), 15, TCGTheme.DIM, false, true)
 			for k in range(LEVELS.size()):
 				var lv: String = LEVELS[k]
 				var lv_col: Color = TCGTheme.GREEN if lv == "easy" else (TCGTheme.TEAL if lv == "normal" else TCGTheme.RED)
-				var lv_rect := Rect2(x0 + 330.0 + float(k) * 76.0, 96.0, 72.0, 30.0)
+				var lv_rect := Rect2(x0 + col_w - 246.0 + float(k) * 82.0, top_y - 2.0, 76.0, 34.0)
 				var lv_key := ["level", p, lv]
 				var is_hov: bool = (typeof(_hovered_key) == TYPE_ARRAY and str(_hovered_key) == str(lv_key))
 				var is_act: bool = (levels[p] == lv)
@@ -206,7 +218,7 @@ func _draw() -> void:
 		for i in range(max_rows):
 			var idx: int = i + scroll[p]
 			var e: Dictionary = entries[idx]
-			var r := Rect2(x0, 136.0 + float(i) * 40.0, 560.0, 36.0)
+			var r := Rect2(x0, top_y + 44.0 + float(i) * row_step, col_w, row_h)
 			var sel: bool = (pick[p] == idx)
 			var ok: bool = bool(e["legal"])
 			var fill_col: Color = TCGTheme.mix(TCGTheme.PANEL, TCGTheme.GOLD, 0.25) if sel else TCGTheme.PANEL
@@ -215,15 +227,15 @@ func _draw() -> void:
 			TCGTheme.draw_text_pos(
 				self,
 				str(e["name"]),
-				Vector2(r.position.x + 12.0, r.position.y + 9.0),
-				16,
+				Vector2(r.position.x + 14.0, r.position.y + 11.0),
+				17,
 				TCGTheme.TEXT if ok else TCGTheme.DIM,
 				sel,
 				false
 			)
 			var chs: Array = e["chars"]
 			for k in range(chs.size()):
-				_draw_mini_char(Rect2(r.end.x - 108.0 + float(k) * 34.0, r.position.y + 3.0, 30.0, 30.0), str(chs[k]), false)
+				_draw_mini_char(Rect2(r.end.x - 122.0 + float(k) * 38.0, r.position.y + 4.0, 34.0, 34.0), str(chs[k]), false)
 			_hit_boxes.append({"rect": r, "key": ["pick", p, idx], "enabled": true})
 
 		var sel_entry: Dictionary = entries[pick[p]]
@@ -231,26 +243,28 @@ func _draw() -> void:
 		if not sel_chars.is_empty():
 			for k in range(sel_chars.size()):
 				var cname: String = str(sel_chars[k])
-				var cr := Rect2(x0 + 40.0 + float(k) * 170.0, 512.0, 120.0, 150.0)
+				var cx_slot: float = x0 + card_gap + float(k) * (card_w + card_gap)
+				var cr := Rect2(cx_slot, preview_y, card_w, card_h)
 				_draw_mini_char(cr, cname, true)
-				TCGTheme.draw_text_centered(self, cname, Vector2(cr.get_center().x, cr.end.y + 14.0), 15, TCGTheme.TEXT, true, true)
+				TCGTheme.draw_text_centered(self, cname, Vector2(cr.get_center().x, cr.end.y + 18.0), 17, TCGTheme.TEXT, true, true)
 		else:
 			TCGTheme.draw_text_centered(
 				self,
 				"The AI will build a random deck (CSP solver)",
-				Vector2(x0 + 280.0, 580.0),
-				16,
+				Vector2(x0 + col_w * 0.5, preview_y + card_h * 0.5),
+				18,
 				TCGTheme.DIM,
 				false,
 				true
 			)
 
 	if not msg.is_empty():
-		TCGTheme.draw_text_centered(self, msg, Vector2(float(TCGTheme.W) * 0.5, 488.0), 15, TCGTheme.GOLD, true, true)
+		TCGTheme.draw_text_centered(self, msg, Vector2(safe.get_center().x, safe.end.y - 84.0), 17, TCGTheme.GOLD, true, true)
 
-	var back_r := Rect2(20.0, 676.0, 100.0, 34.0)
-	var start_r := Rect2(float(TCGTheme.W) * 0.5 - 110.0, 676.0, 220.0, 38.0)
-	var builder_r := Rect2(float(TCGTheme.W) - 230.0, 676.0, 210.0, 34.0)
+	var bot_y: float = safe.end.y - 60.0
+	var back_r := Rect2(safe.position.x + 20.0, bot_y, 130.0, 46.0)
+	var start_r := Rect2(safe.get_center().x - 140.0, bot_y - 4.0, 280.0, 52.0)
+	var builder_r := Rect2(safe.end.x - 260.0, bot_y, 240.0, 46.0)
 
 	TCGTheme.draw_plaque(self, back_r, "< Back", TCGTheme.DIM, str(_hovered_key) == "back", false, false)
 	TCGTheme.draw_plaque(self, start_r, "Start match", TCGTheme.GREEN, str(_hovered_key) == "start", false, false)

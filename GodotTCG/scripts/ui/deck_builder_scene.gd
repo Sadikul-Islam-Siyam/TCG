@@ -85,20 +85,20 @@ func _style_line_edit(le: LineEdit) -> void:
 
 func _build_line_edits() -> void:
 	_name_edit = LineEdit.new()
-	_name_edit.position = Vector2(130, 10)
-	_name_edit.size = Vector2(230, 32)
+	_name_edit.position = Vector2(150, 14)
+	_name_edit.size = Vector2(260, 36)
 	_name_edit.max_length = 24
 	_name_edit.placeholder_text = "Deck name"
-	_name_edit.text = deck_name
 	_style_line_edit(_name_edit)
+	_name_edit.text = deck_name
 	_name_edit.text_changed.connect(func(t: String) -> void:
 		deck_name = t
 	)
 	add_child(_name_edit)
 
 	_search_edit = LineEdit.new()
-	_search_edit.position = Vector2(660, 100)
-	_search_edit.size = Vector2(240, 28)
+	_search_edit.position = Vector2(760, 118)
+	_search_edit.size = Vector2(260, 32)
 	_search_edit.max_length = 24
 	_search_edit.placeholder_text = "Search by name…"
 	_style_line_edit(_search_edit)
@@ -118,8 +118,8 @@ func _build_line_edits() -> void:
 	add_child(_modal_layer)
 
 	_import_edit = LineEdit.new()
-	_import_edit.position = Vector2(364, 210)
-	_import_edit.size = Vector2(552, 34)
+	_import_edit.position = Vector2(660, 360)
+	_import_edit.size = Vector2(600, 38)
 	_import_edit.max_length = 0
 	_import_edit.placeholder_text = "Paste a share code (Ctrl+V)"
 	_style_line_edit(_import_edit)
@@ -132,6 +132,48 @@ func _build_line_edits() -> void:
 		press("do_import")
 	)
 	add_child(_import_edit)
+
+
+func _layout() -> Dictionary:
+	var w: float = maxf(size.x, float(TCGTheme.W))
+	var h: float = maxf(size.y, float(TCGTheme.H))
+	var safe := UIConstants.get_safe_rect(Vector2(w, h))
+	var top_y: float = safe.position.y + 14.0
+	var left_x: float = safe.position.x + 20.0
+	var left_w: float = clampf(safe.size.x * 0.22, 310.0, 390.0)
+	var right_w: float = clampf(safe.size.x * 0.25, 350.0, 460.0)
+	var right_x: float = safe.end.x - right_w - 20.0
+	var center_x: float = left_x + left_w + 24.0
+	var center_w: float = right_x - center_x - 24.0
+	var grid_top: float = top_y + 150.0
+	var info_h: float = 82.0
+	var grid_avail_h: float = maxf(360.0, safe.end.y - grid_top - info_h - 68.0)
+	var max_cw: float = floorf((center_w - 48.0) / float(COLS))
+	var max_ch: float = floorf((grid_avail_h - 24.0) / float(ROWS))
+	var ch: float = minf(max_ch, floorf(max_cw * 1.42))
+	var cw: float = floorf(ch / 1.42)
+	var col_step: float = floorf(center_w / float(COLS))
+	var row_step: float = ch + 14.0
+	var modal_rect := Rect2(safe.get_center() - Vector2(330.0, 280.0), Vector2(660.0, 560.0))
+	return {
+		"w": w,
+		"h": h,
+		"safe": safe,
+		"top_y": top_y,
+		"left_x": left_x,
+		"left_w": left_w,
+		"center_x": center_x,
+		"center_w": center_w,
+		"right_x": right_x,
+		"right_w": right_w,
+		"grid_top": grid_top,
+		"card_w": cw,
+		"card_h": ch,
+		"col_step": col_step,
+		"row_step": row_step,
+		"info_h": info_h,
+		"modal_rect": modal_rect,
+	}
 
 
 func _process(delta: float) -> void:
@@ -490,14 +532,15 @@ func _gui_input(event: InputEvent) -> void:
 					return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var delta_s: int = -1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1
+			var ly_w: Dictionary = _layout()
 			if not modal.is_empty():
 				if str(modal.get("kind", "")) == "load":
 					modal_scroll = maxi(0, modal_scroll + delta_s)
 					_ui_redraw()
-			elif event.position.x > 910.0:
+			elif event.position.x > float(ly_w["right_x"]) - 10.0:
 				scroll = maxi(0, scroll + delta_s)
 				_ui_redraw()
-			elif event.position.x > 310.0:
+			elif event.position.x > float(ly_w["center_x"]) - 10.0:
 				page = maxi(0, page + delta_s)
 				_ui_redraw()
 			accept_event()
@@ -533,43 +576,59 @@ func _is_hov(key: Variant) -> bool:
 
 func _draw() -> void:
 	_hit_boxes.clear()
-	var w: float = maxf(size.x, float(TCGTheme.W))
-	var h: float = maxf(size.y, float(TCGTheme.H))
+	var ly: Dictionary = _layout()
+	var w: float = float(ly["w"])
+	var h: float = float(ly["h"])
+	var top_y: float = float(ly["top_y"])
+	var left_x: float = float(ly["left_x"])
+	var center_x: float = float(ly["center_x"])
+	var center_w: float = float(ly["center_w"])
+	var modal_rect: Rect2 = ly["modal_rect"]
 	TCGArt.draw_mat(self, Vector2(w, h))
 	draw_rect(Rect2(0, 0, w, h), Color(0.03, 0.05, 0.09, 0.45))
 
 	var in_modal: bool = not modal.is_empty()
 
 	# Top Bar
-	var back_r := Rect2(20.0, 10.0, 96.0, 32.0)
+	var back_r := Rect2(left_x, top_y, 110.0, 38.0)
 	TCGTheme.draw_plaque(self, back_r, "< Back", TCGTheme.DIM, _is_hov("back"), false, in_modal)
 	_hit_boxes.append({"rect": back_r, "key": "back", "enabled": not in_modal})
 
+	if _name_edit != null:
+		_name_edit.position = Vector2(back_r.end.x + 14.0, top_y + 1.0)
+		_name_edit.size = Vector2(maxf(200.0, float(ly["left_w"]) - 124.0), 36.0)
+	if _search_edit != null:
+		_search_edit.position = Vector2(center_x + center_w - 280.0, top_y + 98.0)
+		_search_edit.size = Vector2(280.0, 34.0)
+	if _import_edit != null:
+		_import_edit.position = Vector2(modal_rect.position.x + 28.0, modal_rect.position.y + 110.0)
+		_import_edit.size = Vector2(modal_rect.size.x - 56.0, 38.0)
+
 	var top_buttons: Array = [
-		["Save", "save", TCGTheme.GREEN, 84.0],
-		["Load", "load", TCGTheme.TEAL, 84.0],
-		["Auto-fill", "fill", TCGTheme.GOLD, 100.0],
-		["Share", "share", TCGTheme.TEAL, 84.0],
-		["Import", "import", TCGTheme.TEAL, 84.0],
-		["Clear", "clear", TCGTheme.RED, 84.0],
+		["Save", "save", TCGTheme.GREEN, 96.0],
+		["Load", "load", TCGTheme.TEAL, 96.0],
+		["Auto-fill", "fill", TCGTheme.GOLD, 118.0],
+		["Share", "share", TCGTheme.TEAL, 96.0],
+		["Import", "import", TCGTheme.TEAL, 96.0],
+		["Clear", "clear", TCGTheme.RED, 96.0],
 	]
-	var tx: float = 372.0
+	var tx: float = center_x
 	for tb in top_buttons:
 		var bw: float = float(tb[3])
-		var br := Rect2(tx, 10.0, bw, 32.0)
+		var br := Rect2(tx, top_y, bw, 38.0)
 		var bkey: String = str(tb[1])
 		TCGTheme.draw_plaque(self, br, str(tb[0]), tb[2], _is_hov(bkey), false, in_modal)
 		_hit_boxes.append({"rect": br, "key": bkey, "enabled": not in_modal})
-		tx += bw + 8.0
+		tx += bw + 10.0
 
-	_draw_left(in_modal)
-	_draw_center(in_modal)
-	_draw_right(in_modal)
+	_draw_left(in_modal, ly)
+	_draw_center(in_modal, ly)
+	_draw_right(in_modal, ly)
 
 	# Large Hover Card Preview
 	if not hover_card.is_empty() and not in_modal:
-		var preview_x: float = 320.0 if get_local_mouse_position().x > 910.0 else 946.0
-		var preview_r := Rect2(preview_x, 70.0, 210.0, 308.0)
+		var preview_x: float = center_x if get_local_mouse_position().x > float(ly["right_x"]) - 10.0 else float(ly["right_x"]) + 20.0
+		var preview_r := Rect2(preview_x, top_y + 64.0, 236.0, 346.0)
 		TCGActionCardView.draw_card_surface(self, preview_r, hover_card, false, true, true, true)
 
 	if in_modal:
@@ -578,30 +637,41 @@ func _draw() -> void:
 			_modal_layer.queue_redraw()
 
 
-func _draw_left(in_modal: bool) -> void:
-	TCGTheme.draw_text_pos(self, "Characters %d/3" % chars.size(), Vector2(20.0, 70.0), 17, TCGTheme.GOLD, true, true)
+func _draw_left(in_modal: bool, ly: Dictionary) -> void:
+	var lx: float = float(ly["left_x"])
+	var lw: float = float(ly["left_w"])
+	var ty: float = float(ly["top_y"]) + 54.0
+	TCGTheme.draw_text_pos(self, "Characters %d/3" % chars.size(), Vector2(lx, ty), 19, TCGTheme.GOLD, true, true)
+	var slot_gap: float = 10.0
+	var slot_w: float = floorf((lw - slot_gap * 2.0) / 3.0)
+	var slot_h: float = roundf(slot_w * 1.28)
 	for i in range(3):
-		var r := Rect2(20.0 + float(i) * 94.0, 98.0, 88.0, 112.0)
+		var r := Rect2(lx + float(i) * (slot_w + slot_gap), ty + 30.0, slot_w, slot_h)
 		if i < chars.size():
 			var cname: String = chars[i]
-			var pr := Rect2(r.position.x, r.position.y, r.size.x, r.size.y - 22.0)
+			var pr := Rect2(r.position.x, r.position.y, r.size.x, r.size.y - 24.0)
 			_draw_mini_char(pr, cname, true, false)
-			TCGTheme.draw_text_centered(self, cname, Vector2(r.get_center().x, r.end.y - 9.0), 13, TCGTheme.TEXT, true, true)
+			TCGTheme.draw_text_centered(self, cname, Vector2(r.get_center().x, r.end.y - 10.0), 14, TCGTheme.TEXT, true, true)
 			_hit_boxes.append({"rect": pr, "key": ["char", cname], "enabled": not in_modal})
 		else:
 			TCGTheme.draw_rounded_box(self, r, Color8(24, 30, 48), Color8(60, 70, 98), 8, 2)
-			TCGTheme.draw_text_centered(self, "empty", r.get_center(), 14, TCGTheme.DIM, false, true)
+			TCGTheme.draw_text_centered(self, "empty", r.get_center(), 15, TCGTheme.DIM, false, true)
 
-	TCGTheme.draw_text_pos(self, "Roster (click to add / remove)", Vector2(20.0, 226.0), 14, TCGTheme.DIM, false, true)
+	var roster_y: float = ty + 30.0 + slot_h + 18.0
+	TCGTheme.draw_text_pos(self, "Roster (click to add / remove)", Vector2(lx, roster_y), 15, TCGTheme.DIM, false, true)
 	var roster: PackedStringArray = CardDataSystem.roster
+	var r_step: float = floorf((lw + 6.0) / 5.0)
+	var rw: float = r_step - 6.0
+	var rh: float = roundf(rw * 1.18)
 	for k in range(roster.size()):
 		var cname: String = roster[k]
-		var r := Rect2(20.0 + float(k % 5) * 56.0, 248.0 + float(k / 5) * 72.0, 52.0, 64.0)
+		var r := Rect2(lx + float(k % 5) * r_step, roster_y + 24.0 + float(k / 5) * (rh + 8.0), rw, rh)
 		var picked: bool = chars.has(cname)
 		_draw_mini_char(r, cname, picked, not picked and chars.size() >= 3)
-		TCGTheme.draw_text_centered(self, cname.substr(0, 7), Vector2(r.get_center().x, r.end.y - 8.0), 11, TCGTheme.TEXT, true, true)
+		TCGTheme.draw_text_centered(self, cname.substr(0, 7), Vector2(r.get_center().x, r.end.y - 9.0), 12, TCGTheme.TEXT, true, true)
 		_hit_boxes.append({"rect": r, "key": ["char", cname], "enabled": not in_modal})
 
+	var comp_y: float = roster_y + 24.0 + float(ceili(float(roster.size()) / 5.0)) * (rh + 8.0) + 14.0
 	# Composition + Cost Curve
 	var kinds: Dictionary = {}
 	var curve: Dictionary = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
@@ -614,60 +684,67 @@ func _draw_left(in_modal: bool) -> void:
 			var c_bucket: int = mini(total_cost(cd), 4)
 			curve[c_bucket] = int(curve[c_bucket]) + 1
 
-	TCGTheme.draw_text_pos(self, "Composition", Vector2(20.0, 402.0), 15, TCGTheme.GOLD, true, true)
+	TCGTheme.draw_text_pos(self, "Composition", Vector2(lx, comp_y), 16, TCGTheme.GOLD, true, true)
 	var comp_parts: Array[String] = []
 	var k_keys: Array = kinds.keys()
 	k_keys.sort()
 	for kk in k_keys:
 		comp_parts.append("%s %d" % [str(kk), int(kinds[kk])])
 	var comp_line: String = "  ".join(comp_parts) if not comp_parts.is_empty() else "no cards yet"
-	TCGTheme.draw_wrapped(self, comp_line, Rect2(20.0, 424.0, 270.0, 40.0), 13, TCGTheme.DIM, 16, false)
+	TCGTheme.draw_wrapped(self, comp_line, Rect2(lx, comp_y + 24.0, lw, 44.0), 14, TCGTheme.DIM, 18, false)
 
-	TCGTheme.draw_text_pos(self, "Cost curve", Vector2(20.0, 470.0), 15, TCGTheme.GOLD, true, true)
+	var curve_y: float = comp_y + 72.0
+	TCGTheme.draw_text_pos(self, "Cost curve", Vector2(lx, curve_y), 16, TCGTheme.GOLD, true, true)
 	var peak: int = 1
 	for c in range(5):
 		peak = maxi(peak, int(curve[c]))
+	var b_step: float = floorf(lw / 5.0)
 	for c in range(5):
 		var cnt: int = int(curve[c])
-		var bar_h: float = (70.0 * float(cnt) / float(peak)) if cnt > 0 else 0.0
-		var br := Rect2(26.0 + float(c) * 52.0, 546.0 - bar_h, 38.0, bar_h)
+		var bar_h: float = (78.0 * float(cnt) / float(peak)) if cnt > 0 else 0.0
+		var br := Rect2(lx + 6.0 + float(c) * b_step, curve_y + 98.0 - bar_h, b_step - 16.0, bar_h)
 		if bar_h > 0.0:
 			TCGTheme.draw_rounded_box(self, br, TCGTheme.TEAL, Color(0, 0, 0, 0), 4, 0)
-		TCGTheme.draw_text_centered(self, str(cnt), Vector2(26.0 + float(c) * 52.0 + 19.0, br.position.y - 8.0), 13, TCGTheme.TEXT, true, true)
-		TCGTheme.draw_text_centered(self, "4+" if c == 4 else str(c), Vector2(26.0 + float(c) * 52.0 + 19.0, 558.0), 13, TCGTheme.DIM, false, true)
+		TCGTheme.draw_text_centered(self, str(cnt), Vector2(br.position.x + br.size.x * 0.5, br.position.y - 10.0), 14, TCGTheme.TEXT, true, true)
+		TCGTheme.draw_text_centered(self, "4+" if c == 4 else str(c), Vector2(br.position.x + br.size.x * 0.5, curve_y + 112.0), 14, TCGTheme.DIM, false, true)
 
 	var val: Dictionary = validation()
 	var msgs: Array = val["messages"]
 	var ok: bool = bool(val["ok"])
-	TCGTheme.draw_text_pos(self, "Status", Vector2(20.0, 584.0), 15, TCGTheme.GOLD, true, true)
+	var stat_y: float = curve_y + 134.0
+	TCGTheme.draw_text_pos(self, "Status", Vector2(lx, stat_y), 16, TCGTheme.GOLD, true, true)
 	var msg_joined: Array[String] = []
 	for m_i in range(mini(4, msgs.size())):
 		msg_joined.append(str(msgs[m_i]))
-	TCGTheme.draw_wrapped(self, "\n".join(msg_joined), Rect2(20.0, 606.0, 270.0, 96.0), 13, TCGTheme.GREEN if ok else TCGTheme.RED, 16, false)
+	TCGTheme.draw_wrapped(self, "\n".join(msg_joined), Rect2(lx, stat_y + 24.0, lw, 110.0), 14, TCGTheme.GREEN if ok else TCGTheme.RED, 18, false)
 
 
-func _draw_center(in_modal: bool) -> void:
-	var tx: float = 320.0
+func _draw_center(in_modal: bool, ly: Dictionary) -> void:
+	var cx: float = float(ly["center_x"])
+	var cw_tot: float = float(ly["center_w"])
+	var top_y: float = float(ly["top_y"])
+	var safe: Rect2 = ly["safe"]
+	var tx: float = cx
 	for t in TABS:
-		var w: float = 76.0 if t != "Resonance" else 92.0
-		var r := Rect2(tx, 64.0, w, 28.0)
+		var w: float = 86.0 if t != "Resonance" else 108.0
+		var r := Rect2(tx, top_y + 54.0, w, 32.0)
 		var tkey := ["tab", t]
 		TCGTheme.draw_plaque(self, r, t, TCGTheme.TEAL, _is_hov(tkey) or (tab == t), in_modal, true)
 		_hit_boxes.append({"rect": r, "key": tkey, "enabled": not in_modal})
-		tx += w + 5.0
+		tx += w + 8.0
 
-	var el_r := Rect2(320.0, 100.0, 104.0, 28.0)
+	var el_r := Rect2(cx, top_y + 98.0, 124.0, 34.0)
 	var el_label: String = element_filter if not element_filter.is_empty() else "Element: any"
 	var el_col: Color = TCGTheme.elem_color(element_filter) if not element_filter.is_empty() else TCGTheme.DIM
 	TCGTheme.draw_plaque(self, el_r, el_label, el_col, _is_hov("element"), in_modal, true)
 	_hit_boxes.append({"rect": el_r, "key": "element", "enabled": not in_modal})
 
-	var cost_r := Rect2(430.0, 100.0, 96.0, 28.0)
+	var cost_r := Rect2(el_r.end.x + 8.0, top_y + 98.0, 110.0, 34.0)
 	var cost_label: String = "Cost: any" if cost_filter < 0 else ("Cost: %d%s" % [cost_filter, "+" if cost_filter == 4 else ""])
 	TCGTheme.draw_plaque(self, cost_r, cost_label, TCGTheme.DIM, _is_hov("costf"), in_modal, true)
 	_hit_boxes.append({"rect": cost_r, "key": "costf", "enabled": not in_modal})
 
-	var allow_r := Rect2(532.0, 100.0, 120.0, 28.0)
+	var allow_r := Rect2(cost_r.end.x + 8.0, top_y + 98.0, 138.0, 34.0)
 	var allow_label: String = "Fits deck only" if allowed_only else "Show all"
 	TCGTheme.draw_plaque(self, allow_r, allow_label, TCGTheme.GOLD, _is_hov("allowed") or allowed_only, in_modal, true)
 	_hit_boxes.append({"rect": allow_r, "key": "allowed", "enabled": not in_modal})
@@ -678,52 +755,63 @@ func _draw_center(in_modal: bool) -> void:
 	page = mini(page, pages - 1)
 	var start_i: int = page * per_page
 	var end_i: int = mini(names.size(), start_i + per_page)
+	var grid_top: float = float(ly["grid_top"])
+	var card_w: float = float(ly["card_w"])
+	var card_h: float = float(ly["card_h"])
+	var col_step: float = float(ly["col_step"])
+	var row_step: float = float(ly["row_step"])
 
 	if names.is_empty():
-		TCGTheme.draw_text_centered(self, "No cards match. Pick characters, or switch to 'Show all'.", Vector2(620.0, 300.0), 16, TCGTheme.DIM, false, true)
+		TCGTheme.draw_text_centered(self, "No cards match. Pick characters, or switch to 'Show all'.", Vector2(cx + cw_tot * 0.5, grid_top + row_step * 1.3), 18, TCGTheme.DIM, false, true)
 	else:
 		for i in range(end_i - start_i):
 			var n: String = names[start_i + i]
-			var r := Rect2(322.0 + float(i % COLS) * 114.0, 142.0 + float(i / COLS) * 148.0, CARD_W, CARD_H)
+			var r := Rect2(cx + float(i % COLS) * col_step, grid_top + float(i / COLS) * row_step, card_w, card_h)
 			var cnt: int = int(counts.get(n, 0))
 			var ok: bool = allowed(n) and cnt < TCGDeckSystem.MAX_COPIES
 			var ckey := ["card", n]
 			TCGActionCardView.draw_card_surface(self, r, n, cnt > 0, _is_hov(ckey), ok, false)
 			if cnt > 0:
 				var bc := Vector2(r.end.x - 4.0, r.position.y + 4.0)
-				draw_circle(bc, 14.0, Color8(20, 24, 38))
-				draw_arc(bc, 14.0, 0.0, TAU, 24, TCGTheme.GOLD, 2.0)
-				TCGTheme.draw_text_centered(self, "x%d" % cnt, bc, 14, TCGTheme.GOLD, true, false)
+				draw_circle(bc, 15.0, Color8(20, 24, 38))
+				draw_arc(bc, 15.0, 0.0, TAU, 24, TCGTheme.GOLD, 2.0)
+				TCGTheme.draw_text_centered(self, "x%d" % cnt, bc, 15, TCGTheme.GOLD, true, false)
 			_hit_boxes.append({"rect": r, "key": ckey, "enabled": not in_modal})
 
-	var prev_r := Rect2(320.0, 596.0, 80.0, 28.0)
-	var next_r := Rect2(820.0, 596.0, 80.0, 28.0)
+	var pager_y: float = safe.end.y - float(ly["info_h"]) - 52.0
+	var prev_r := Rect2(cx, pager_y, 96.0, 34.0)
+	var next_r := Rect2(cx + cw_tot - 96.0, pager_y, 96.0, 34.0)
 	TCGTheme.draw_plaque(self, prev_r, "< Prev", TCGTheme.DIM, _is_hov("prev"), in_modal or page <= 0, true)
-	TCGTheme.draw_text_centered(self, "Page %d/%d   (%d cards)" % [page + 1, pages, names.size()], Vector2(610.0, 610.0), 14, TCGTheme.DIM, false, true)
+	TCGTheme.draw_text_centered(self, "Page %d/%d   (%d cards)" % [page + 1, pages, names.size()], Vector2(cx + cw_tot * 0.5, pager_y + 17.0), 16, TCGTheme.DIM, false, true)
 	TCGTheme.draw_plaque(self, next_r, "Next >", TCGTheme.DIM, _is_hov("next"), in_modal or page >= pages - 1, true)
 	_hit_boxes.append({"rect": prev_r, "key": "prev", "enabled": not in_modal and page > 0})
 	_hit_boxes.append({"rect": next_r, "key": "next", "enabled": not in_modal and page < pages - 1})
 
-	var info := Rect2(320.0, 636.0, 580.0, 64.0)
+	var info := Rect2(cx, safe.end.y - float(ly["info_h"]) - 12.0, cw_tot, float(ly["info_h"]))
 	TCGTheme.draw_rounded_box(self, info, TCGTheme.PANEL, Color(0, 0, 0, 0), 8, 0)
 	if msg_t > 0.0:
-		TCGTheme.draw_text_centered(self, msg, info.get_center(), 16, TCGTheme.GREEN if msg_ok else TCGTheme.GOLD, true, true)
+		TCGTheme.draw_text_centered(self, msg, info.get_center(), 17, TCGTheme.GREEN if msg_ok else TCGTheme.GOLD, true, true)
 	elif not hover_card.is_empty():
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(hover_card)
 		if cd != null:
-			TCGTheme.draw_text_pos(self, cd.name, Vector2(info.position.x + 12.0, info.position.y + 8.0), 17, TCGTheme.GOLD, true, true)
+			TCGTheme.draw_text_pos(self, cd.name, Vector2(info.position.x + 14.0, info.position.y + 10.0), 18, TCGTheme.GOLD, true, true)
 			var pairs := TCGActionCardView.cost_to_pairs(cd.cost)
 			for p_i in range(pairs.size()):
-				TCGArt.draw_cost_gem(self, str(pairs[p_i][0]), int(pairs[p_i][1]), Vector2(info.position.x + 24.0 + float(p_i) * 24.0, info.position.y + 44.0), 10.0)
-			TCGTheme.draw_text_pos(self, requirement(cd), Vector2(info.position.x + 120.0, info.position.y + 36.0), 14, TCGTheme.TEXT, false, true)
+				TCGArt.draw_cost_gem(self, str(pairs[p_i][0]), int(pairs[p_i][1]), Vector2(info.position.x + 28.0 + float(p_i) * 26.0, info.position.y + 52.0), 11.0)
+			TCGTheme.draw_text_pos(self, requirement(cd), Vector2(info.position.x + 132.0, info.position.y + 42.0), 15, TCGTheme.TEXT, false, true)
 	else:
-		TCGTheme.draw_text_centered(self, "Left click: add a copy    Right click: remove    Wheel: change page", info.get_center(), 14, TCGTheme.DIM, false, true)
+		TCGTheme.draw_text_centered(self, "Left click: add a copy    Right click: remove    Wheel: change page", info.get_center(), 15, TCGTheme.DIM, false, true)
 
 
-func _draw_right(in_modal: bool) -> void:
+func _draw_right(in_modal: bool, ly: Dictionary) -> void:
+	var rx: float = float(ly["right_x"])
+	var rw: float = float(ly["right_w"])
+	var top_y: float = float(ly["top_y"]) + 52.0
+	var safe: Rect2 = ly["safe"]
+	var panel_h: float = safe.end.y - top_y - 12.0
 	var n_total: int = total()
-	TCGTheme.draw_rounded_box(self, Rect2(920.0, 62.0, 340.0, 640.0), TCGTheme.PANEL, Color(0, 0, 0, 0), 10, 0)
-	TCGTheme.draw_text_pos(self, "Deck  %d/30" % n_total, Vector2(936.0, 70.0), 20, TCGTheme.GREEN if n_total == 30 else TCGTheme.GOLD, true, true)
+	TCGTheme.draw_rounded_box(self, Rect2(rx, top_y, rw, panel_h), TCGTheme.PANEL, Color(0, 0, 0, 0), 10, 0)
+	TCGTheme.draw_text_pos(self, "Deck  %d/30" % n_total, Vector2(rx + 16.0, top_y + 10.0), 22, TCGTheme.GREEN if n_total == 30 else TCGTheme.GOLD, true, true)
 
 	var rows: Array = []
 	for k in counts.keys():
@@ -737,7 +825,8 @@ func _draw_right(in_modal: bool) -> void:
 		return str(lhs[1]) < str(rhs[1])
 	)
 
-	var per: int = 25
+	var row_step: float = 28.0
+	var per: int = maxi(10, int(floorf((panel_h - 72.0) / row_step)))
 	scroll = clampi(scroll, 0, maxi(0, rows.size() - per))
 	var end_r: int = mini(rows.size(), scroll + per)
 	for i in range(end_r - scroll):
@@ -745,7 +834,7 @@ func _draw_right(in_modal: bool) -> void:
 		var tc: int = int(row[0])
 		var cname: String = str(row[1])
 		var cnt: int = int(row[2])
-		var r := Rect2(930.0, 102.0 + float(i) * 23.0, 320.0, 21.0)
+		var r := Rect2(rx + 12.0, top_y + 46.0 + float(i) * row_step, rw - 24.0, row_step - 3.0)
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(cname)
 		var kcol: Color = TCGTheme.TEAL
 		if cd != null:
@@ -759,15 +848,15 @@ func _draw_right(in_modal: bool) -> void:
 		var row_fill: Color = TCGTheme.mix(TCGTheme.PANEL2, kcol, 0.42 if row_hovered else 0.25)
 		var row_border: Color = TCGTheme.GOLD if row_hovered else Color(0, 0, 0, 0)
 		TCGTheme.draw_rounded_box(self, r, row_fill, row_border, 5, 1 if row_hovered else 0)
-		TCGTheme.draw_text_centered(self, str(tc), Vector2(r.position.x + 12.0, r.get_center().y), 13, TCGTheme.GOLD, true, false)
-		TCGTheme.draw_text_pos(self, cname, Vector2(r.position.x + 30.0, r.position.y + 3.0), 14, TCGTheme.TEXT, false, false)
-		TCGTheme.draw_text_pos(self, "x%d" % cnt, Vector2(r.end.x - 28.0, r.position.y + 3.0), 14, TCGTheme.GOLD, true, false)
+		TCGTheme.draw_text_centered(self, str(tc), Vector2(r.position.x + 14.0, r.get_center().y), 14, TCGTheme.GOLD, true, false)
+		TCGTheme.draw_text_pos(self, cname, Vector2(r.position.x + 34.0, r.position.y + 4.0), 15, TCGTheme.TEXT, false, false)
+		TCGTheme.draw_text_pos(self, "x%d" % cnt, Vector2(r.end.x - 34.0, r.position.y + 4.0), 15, TCGTheme.GOLD, true, false)
 		_hit_boxes.append({"rect": r, "key": ["row", cname], "enabled": not in_modal})
 
 	if rows.is_empty():
-		TCGTheme.draw_text_centered(self, "Click cards to add them", Vector2(1090.0, 300.0), 15, TCGTheme.DIM, false, true)
+		TCGTheme.draw_text_centered(self, "Click cards to add them", Vector2(rx + rw * 0.5, top_y + panel_h * 0.45), 16, TCGTheme.DIM, false, true)
 	elif rows.size() > per:
-		TCGTheme.draw_text_centered(self, "scroll for more (%d)" % (rows.size() - per), Vector2(1090.0, 686.0), 12, TCGTheme.DIM, false, true)
+		TCGTheme.draw_text_centered(self, "scroll for more (%d)" % (rows.size() - per), Vector2(rx + rw * 0.5, safe.end.y - 24.0), 13, TCGTheme.DIM, false, true)
 
 
 func _build_load_entries() -> Array:
@@ -785,7 +874,8 @@ func _build_load_entries() -> Array:
 
 func _register_modal_hitboxes() -> void:
 	_hit_boxes.clear()
-	var panel := Rect2(340.0, 110.0, 600.0, 500.0)
+	var ly: Dictionary = _layout()
+	var panel: Rect2 = ly["modal_rect"]
 	var close_r := Rect2(panel.end.x - 110.0, panel.end.y - 50.0, 96.0, 34.0)
 	_hit_boxes.append({"rect": close_r, "key": "close", "enabled": true})
 
@@ -799,7 +889,7 @@ func _register_modal_hitboxes() -> void:
 			var item: Array = load_entries[modal_scroll + i]
 			var saved: bool = bool(item[3])
 			var d_obj: Dictionary = item[4]
-			var r := Rect2(panel.position.x + 20.0, panel.position.y + 56.0 + float(i) * 31.0, 480.0, 28.0)
+			var r := Rect2(panel.position.x + 20.0, panel.position.y + 56.0 + float(i) * 32.0, panel.size.x - 108.0, 28.0)
 			_hit_boxes.append({"rect": r, "key": ["loaddeck", d_obj, saved], "enabled": true})
 			if saved:
 				var del_r := Rect2(r.end.x + 8.0, r.position.y, 56.0, 28.0)
@@ -816,9 +906,10 @@ func _register_modal_hitboxes() -> void:
 func _draw_modal_layer() -> void:
 	if _modal_layer == null or modal.is_empty():
 		return
+	var ly: Dictionary = _layout()
 	var c: CanvasItem = _modal_layer
-	c.draw_rect(Rect2(0, 0, maxf(size.x, float(TCGTheme.W)), maxf(size.y, float(TCGTheme.H))), Color(0, 0, 0, 0.74))
-	var panel := Rect2(340.0, 110.0, 600.0, 500.0)
+	c.draw_rect(Rect2(0, 0, float(ly["w"]), float(ly["h"])), Color(0, 0, 0, 0.74))
+	var panel: Rect2 = ly["modal_rect"]
 	TCGTheme.draw_gold_frame(c, panel, TCGTheme.PANEL, 14, true)
 
 	var close_r := Rect2(panel.end.x - 110.0, panel.end.y - 50.0, 96.0, 34.0)

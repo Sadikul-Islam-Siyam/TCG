@@ -4,8 +4,8 @@ extends RefCounted
 ## Direct port of PythonTCG/ui/theme.py (color palette, element colors, shading,
 ## gold frames, parchment plaques, badges, and crisp outlined typography).
 
-const W: int = 1280
-const H: int = 720
+const W: int = 1920
+const H: int = 1080
 
 const BG := Color8(12, 20, 32)
 const PANEL := Color8(22, 34, 50)
@@ -34,37 +34,174 @@ const REACT: Dictionary = {
 	"Crystallize": {"elements": ["Geo"], "desc": "+1 damage, shield gained"},
 }
 
-const ELEM_COL: Dictionary = {
-	"Cryo": Color8(157, 224, 255),
-	"Hydro": Color8(73, 166, 255),
-	"Pyro": Color8(255, 115, 75),
-	"Electro": Color8(194, 132, 255),
-	"Anemo": Color8(112, 232, 195),
-	"Geo": Color8(255, 202, 92),
-	"Omni": Color8(244, 243, 255),
-	"Physical": Color8(218, 222, 228),
-	"Piercing": Color8(244, 244, 252),
-}
+static var ELEM_COL: Dictionary = {}
+static var ELEM_DARK: Dictionary = {}
+static var _display_font: Font = null
+static var _body_font: Font = null
+static var _app_theme: Theme = null
 
-const ELEM_DARK: Dictionary = {
-	"Cryo": Color8(34, 66, 92),
-	"Hydro": Color8(22, 48, 86),
-	"Pyro": Color8(88, 30, 24),
-	"Electro": Color8(58, 34, 88),
-	"Anemo": Color8(24, 72, 64),
-	"Geo": Color8(78, 56, 24),
-	"Omni": Color8(58, 52, 74),
-	"Physical": Color8(52, 56, 66),
-	"Piercing": Color8(60, 60, 74),
-}
+
+static func _static_init() -> void:
+	_sync_elem_maps()
+
+
+static func _sync_elem_maps() -> void:
+	if not ELEM_COL.is_empty():
+		return
+	for el_id in ElementDB.all_ids():
+		ELEM_COL[el_id] = ElementDB.get_color(el_id)
+		ELEM_DARK[el_id] = ElementDB.get_dark_color(el_id)
 
 
 static func elem_color(e: String) -> Color:
-	return ELEM_COL.get(e, DIM)
+	var ed := ElementDB.get_element(e)
+	if ed != null and (String(ed.id) == e or String(ed.id) == e.capitalize()):
+		return ed.color
+	return DIM
 
 
 static func elem_dark(e: String) -> Color:
-	return ELEM_DARK.get(e, PANEL2)
+	var ed := ElementDB.get_element(e)
+	if ed != null and (String(ed.id) == e or String(ed.id) == e.capitalize()):
+		return ed.dark_color
+	return PANEL2
+
+
+static func elem_light(e: String) -> Color:
+	var ed := ElementDB.get_element(e)
+	if ed != null and (String(ed.id) == e or String(ed.id) == e.capitalize()):
+		return ed.light_color
+	return GOLD_L
+
+
+static func get_display_font() -> Font:
+	if _display_font == null:
+		var sf := SystemFont.new()
+		sf.font_names = PackedStringArray(["Georgia", "Palatino Linotype", "Times New Roman", "Liberation Serif", "Noto Serif", "serif"])
+		sf.font_weight = 600
+		_display_font = sf
+	return _display_font
+
+
+static func get_body_font() -> Font:
+	if _body_font == null:
+		var sf := SystemFont.new()
+		sf.font_names = PackedStringArray(["Segoe UI", "Inter", "Noto Sans", "DejaVu Sans", "sans-serif"])
+		sf.font_weight = 400
+		_body_font = sf
+	return _body_font
+
+
+static func make_slate_panel_style(
+	fill: Color = PANEL,
+	outer_border: Color = GOLD,
+	inner_border: Color = GOLD_D,
+	radius: int = 12,
+	border_w: int = 2
+) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = outer_border
+	sb.set_border_width_all(border_w)
+	sb.set_corner_radius_all(radius)
+	sb.shadow_color = Color(0, 0, 0, 0.36)
+	sb.shadow_size = 6
+	sb.shadow_offset = Vector2(0, 3)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	# Note: second inner border is drawn via draw_gold_frame or inner overlay panel where needed
+	var _unused := inner_border
+	return sb
+
+
+static func make_gem_style(elem_id: String, radius: int = 14) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = elem_dark(elem_id)
+	sb.border_color = elem_color(elem_id)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(radius)
+	return sb
+
+
+static func make_counter_pill_style(accent: Color = GOLD_D) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.11, 0.16, 0.94)
+	sb.border_color = accent
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(8)
+	sb.content_margin_left = 6
+	sb.content_margin_right = 6
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
+	return sb
+
+
+static func make_button_style(hovered: bool = false, pressed: bool = false, disabled: bool = false) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	if disabled:
+		sb.bg_color = Color8(26, 31, 40)
+		sb.border_color = GOLD_D
+	elif pressed:
+		sb.bg_color = mix(PANEL2, GOLD, 0.25)
+		sb.border_color = GOLD_L
+	elif hovered:
+		sb.bg_color = mix(PANEL2, GOLD, 0.16)
+		sb.border_color = GOLD_L
+	else:
+		sb.bg_color = PANEL2
+		sb.border_color = GOLD
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	return sb
+
+
+static func build_app_theme() -> Theme:
+	if _app_theme != null:
+		return _app_theme
+	var t := Theme.new()
+	t.default_font = get_body_font()
+	t.default_font_size = UIConstants.FONT_BODY
+	t.set_constant("title_size", "TCGTypography", UIConstants.FONT_TITLE)
+	t.set_constant("header_size", "TCGTypography", UIConstants.FONT_HEADER)
+	t.set_constant("body_size", "TCGTypography", UIConstants.FONT_BODY)
+	t.set_constant("caption_size", "TCGTypography", UIConstants.FONT_CAPTION)
+	t.set_constant("counter_size", "TCGTypography", UIConstants.FONT_COUNTER)
+	t.set_font("display", "TCGTypography", get_display_font())
+	t.set_font("body", "TCGTypography", get_body_font())
+	t.set_color("font_color", "Label", TEXT)
+	t.set_color("font_color", "RichTextLabel", TEXT)
+	t.set_stylebox("panel", "Panel", make_slate_panel_style())
+	t.set_stylebox("panel", "PanelContainer", make_slate_panel_style())
+	t.set_stylebox("normal", "Button", make_button_style(false, false, false))
+	t.set_stylebox("hover", "Button", make_button_style(true, false, false))
+	t.set_stylebox("pressed", "Button", make_button_style(false, true, false))
+	t.set_stylebox("disabled", "Button", make_button_style(false, false, true))
+	t.set_color("font_color", "Button", TEXT)
+	t.set_color("font_hover_color", "Button", GOLD_L)
+	t.set_color("font_disabled_color", "Button", DIM)
+	t.set_stylebox("panel", "TooltipPanel", make_slate_panel_style(Color8(14, 21, 32), GOLD, GOLD_D, 8, 1))
+	t.set_color("font_color", "TooltipLabel", TEXT)
+	var scroll_bg := StyleBoxFlat.new()
+	scroll_bg.bg_color = Color(0.08, 0.11, 0.16, 0.85)
+	scroll_bg.set_corner_radius_all(4)
+	var scroll_grab := StyleBoxFlat.new()
+	scroll_grab.bg_color = GOLD_D
+	scroll_grab.set_corner_radius_all(4)
+	var scroll_grab_hi := StyleBoxFlat.new()
+	scroll_grab_hi.bg_color = GOLD
+	scroll_grab_hi.set_corner_radius_all(4)
+	t.set_stylebox("scroll", "VScrollBar", scroll_bg)
+	t.set_stylebox("grabber", "VScrollBar", scroll_grab)
+	t.set_stylebox("grabber_highlight", "VScrollBar", scroll_grab_hi)
+	t.set_stylebox("grabber_pressed", "VScrollBar", scroll_grab_hi)
+	_app_theme = t
+	return _app_theme
 
 
 static func mix(a: Color, b: Color, t: float) -> Color:
@@ -195,7 +332,7 @@ static func draw_plaque(
 		canvas,
 		label,
 		rect.get_center(),
-		13 if small else 16,
+		15 if small else 19,
 		col,
 		true,
 		true
@@ -317,11 +454,11 @@ static func draw_reaction_pill(
 	var a: float = clampf(alpha, 0.0, 1.0)
 	var title_upper := title.to_upper()
 	var f: Font = ThemeDB.fallback_font
-	var tw: float = f.get_string_size(title_upper, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
-	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var tw: float = f.get_string_size(title_upper, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
 	var n_els: int = elements.size()
-	var w: float = maxf(170.0, maxf(tw + 70.0 + float(n_els) * 20.0, sw + 44.0 + float(n_els) * 20.0))
-	var h: float = 52.0
+	var w: float = maxf(210.0, maxf(tw + 76.0 + float(n_els) * 22.0, sw + 48.0 + float(n_els) * 22.0))
+	var h: float = 60.0
 	var rect := Rect2(center.x - w * 0.5, center.y - h * 0.5, w, h)
 
 	draw_rounded_box(
@@ -336,21 +473,21 @@ static func draw_reaction_pill(
 	)
 
 	# Element gems on left
-	var gx: float = rect.position.x + 22.0
+	var gx: float = rect.position.x + 24.0
 	for el_raw in elements:
 		var el := String(el_raw)
 		var c_pt := Vector2(gx, center.y)
 		var gem_col := elem_color(el)
-		canvas.draw_circle(c_pt, 9.0, Color(gem_col.r, gem_col.g, gem_col.b, a))
-		canvas.draw_arc(c_pt, 9.0, 0.0, TAU, 16, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), 1.5)
-		gx += 20.0
+		canvas.draw_circle(c_pt, 10.0, Color(gem_col.r, gem_col.g, gem_col.b, a))
+		canvas.draw_arc(c_pt, 10.0, 0.0, TAU, 16, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), 1.5)
+		gx += 22.0
 
 	var text_cx: float = (rect.position.x + gx + w - 20.0) * 0.5
 	if not sub.is_empty():
-		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y - 9.0), 16, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
-		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 11.0), 12, Color(TEXT.r, TEXT.g, TEXT.b, a), false, false)
+		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y - 10.0), 19, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
+		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 12.0), 14, Color(TEXT.r, TEXT.g, TEXT.b, a), false, false)
 	else:
-		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y), 18, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
+		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y), 20, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
 
 
 static func draw_action_ribbon(
@@ -365,10 +502,10 @@ static func draw_action_ribbon(
 		return
 	var a: float = clampf(alpha, 0.0, 1.0)
 	var f: Font = ThemeDB.fallback_font
-	var tw: float = f.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
-	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-	var w: float = maxf(380.0, maxf(tw, sw) + 84.0)
-	var h: float = 56.0
+	var tw: float = f.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
+	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+	var w: float = maxf(430.0, maxf(tw, sw) + 92.0)
+	var h: float = 64.0
 	var rect := Rect2(center.x - w * 0.5, center.y - h * 0.5, w, h)
 
 	draw_rounded_box(
@@ -388,10 +525,10 @@ static func draw_action_ribbon(
 
 	var text_cx: float = center.x + 6.0
 	if not sub.is_empty():
-		draw_text_centered(canvas, title, Vector2(text_cx, center.y - 9.0), 18, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
-		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 11.0), 12, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), false, false)
+		draw_text_centered(canvas, title, Vector2(text_cx, center.y - 11.0), 21, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
+		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 12.0), 14, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), false, false)
 	else:
-		draw_text_centered(canvas, title, Vector2(text_cx, center.y), 19, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
+		draw_text_centered(canvas, title, Vector2(text_cx, center.y), 22, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
 
 
 static func draw_phase_announcement(
@@ -405,16 +542,16 @@ static func draw_phase_announcement(
 	if alpha <= 0.01:
 		return
 	var a: float = clampf(alpha, 0.0, 1.0)
-	var band_h: float = 90.0
+	var band_h: float = 104.0
 	var band := Rect2(0.0, center_y - band_h * 0.5, float(W), band_h)
 	canvas.draw_rect(band, Color(0.04, 0.06, 0.09, 0.85 * a))
 	canvas.draw_line(Vector2(0.0, band.position.y), Vector2(float(W), band.position.y), Color(GOLD.r, GOLD.g, GOLD.b, a), 2.0)
 	canvas.draw_line(Vector2(0.0, band.end.y), Vector2(float(W), band.end.y), Color(GOLD.r, GOLD.g, GOLD.b, a), 2.0)
 
 	if not sub.is_empty():
-		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y - 12.0), 34, Color(title_col.r, title_col.g, title_col.b, a), true, true)
-		draw_text_centered(canvas, sub, Vector2(float(W) * 0.5, center_y + 22.0), 15, Color(TEXT.r, TEXT.g, TEXT.b, a), false, true)
+		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y - 14.0), 38, Color(title_col.r, title_col.g, title_col.b, a), true, true)
+		draw_text_centered(canvas, sub, Vector2(float(W) * 0.5, center_y + 24.0), 17, Color(TEXT.r, TEXT.g, TEXT.b, a), false, true)
 	else:
-		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y), 36, Color(title_col.r, title_col.g, title_col.b, a), true, true)
+		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y), 40, Color(title_col.r, title_col.g, title_col.b, a), true, true)
 
 

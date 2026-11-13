@@ -18,9 +18,9 @@ func _ready() -> void:
 	var user_args: PackedStringArray = OS.get_cmdline_user_args()
 
 	if args.has("--run-tests") or user_args.has("--run-tests") or DisplayServer.get_name() == "headless":
-		_run_verification_summary()
+		var all_ok := _run_verification_summary()
 		if args.has("--quit-after-tests") or user_args.has("--quit-after-tests"):
-			get_tree().quit(0)
+			get_tree().quit(0 if all_ok else 1)
 			return
 
 	show_menu()
@@ -130,7 +130,7 @@ func _on_menu_mode_selected(mode_id: String) -> void:
 			get_tree().quit(0)
 
 
-func _run_verification_summary() -> void:
+func _run_verification_summary() -> bool:
 	var data_errors := TCGDataValidator.validate_all(CardDataSystem)
 	var rules_res := TCGRulesTestSuite.run_all_tests()
 	var lc_res := TCGLifecycleTestSuite.run_all_tests()
@@ -138,8 +138,9 @@ func _run_verification_summary() -> void:
 	var fb_res := TCGCombatFeedbackTestSuite.run_all()
 	var ai_res := TCGAITestSuite.run_all_tests()
 	var deck_ui_res := TCGDeckUITestSuite.run_all_tests()
+	var polish_res := UIPolishTestSuite.run_all_tests()
 
-	print("[Stage 9 Check] Data errors: %d | Rules: %d/%d | Lifecycle: %d/%d | UI: %d/%d | Combat/Feedback: %d/%d | AI: %d/%d | DeckUI: %d/%d" % [
+	print("[Stage 9 Check] Data errors: %d | Rules: %d/%d | Lifecycle: %d/%d | UI: %d/%d | Combat/Feedback: %d/%d | AI: %d/%d | DeckUI: %d/%d | UIPolish: %d/%d" % [
 		data_errors.size(),
 		int(rules_res["passed"]),
 		int(rules_res["total"]),
@@ -153,10 +154,26 @@ func _run_verification_summary() -> void:
 		int(ai_res["total"]),
 		int(deck_ui_res["passed"]),
 		int(deck_ui_res["total"]),
+		int(polish_res["passed"]),
+		int(polish_res["total"]),
 	])
 	for item in deck_ui_res["results"]:
 		print("  PASS: %s" % str(item["name"]))
+	var ok := data_errors.is_empty()
+	for suite_res in [rules_res, lc_res, ui_res, fb_res, ai_res, deck_ui_res, polish_res]:
+		if int(suite_res["passed"]) != int(suite_res["total"]):
+			ok = false
+			if suite_res.has("results"):
+				for ritem in suite_res["results"]:
+					if ritem is Dictionary and not bool(ritem.get("ok", ritem.get("passed", true))):
+						print("  FAIL DETAIL: %s -> %s" % [str(ritem.get("name", "?")), str(ritem.get("error", ""))])
+	for item in polish_res["results"]:
+		if bool(item["passed"]):
+			print("  PASS: %s" % str(item["name"]))
+		else:
+			print("  FAIL: %s -> %s" % [str(item["name"]), str(item["error"])])
 	TCGArt.clear_cache()
+	return ok
 
 
 func _capture_stage7_screenshots() -> void:
@@ -284,6 +301,8 @@ func _capture_stage10_screenshots() -> void:
 
 func _snap(shots_dir: String, fname: String) -> void:
 	await get_tree().process_frame
+	if DisplayServer.get_name() == "headless":
+		return
 	await RenderingServer.frame_post_draw
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
@@ -349,6 +368,49 @@ func _capture_audit_screenshots() -> void:
 	board.queue_redraw()
 	await _snap(shots_dir, "audit_07_game_over.png")
 
+	# 8. Clean 16:9 Active Action Board (without drawer/modals)
+	board.start_interactive_match("pve", 0, 1, 42, true)
+	board.view_player = board.actor()
+	board.human_flags[board.view_player] = true
+	board.me().hand.assign(["Traveler's Handy Sword", "Paimon", "Strategize", "Lotus Flower Crisp", "Changing Shifts"])
+	board.me().characters[0].aura = "Electro"
+	board.game_state.players[1 - board.view_player].characters[0].aura = "Pyro"
+	board.sync_from_state()
+	if board.detail_drawer != null:
+		board.detail_drawer.close_immediate()
+	board.queue_redraw()
+	await _snap(shots_dir, "audit_08_clean_board_16_9.png")
+
+	# 12. Click-1 Skill Damage & Reaction Forecast Preview (verifies card & tooltip overlays)
+	board.me().dice.assign(["Electro", "Electro", "Electro", "Omni"])
+	board._on_skill_clicked(1)
+	board.queue_redraw()
+	await _snap(shots_dir, "audit_12_skill_preview.png")
+	board._inspected.clear()
+	board.sync_from_state()
+
+	# 9. Settings Modal
+	if board.settings_modal != null:
+		board.settings_modal.open()
+	board.queue_redraw()
+	await _snap(shots_dir, "audit_09_settings_modal.png")
+	if board.settings_modal != null:
+		board.settings_modal.close()
+
+	# 10. 19.5:9 Ultrawide Viewport Audit
+	DisplayServer.window_set_size(Vector2i(1560, 720))
+	await get_tree().process_frame
+	board._compute_board_layout()
+	board.sync_from_state()
+	await _snap(shots_dir, "audit_10_board_19_5_9.png")
+
+	# 11. 4:3 Desktop Viewport Audit
+	DisplayServer.window_set_size(Vector2i(1024, 768))
+	await get_tree().process_frame
+	board._compute_board_layout()
+	board.sync_from_state()
+	await _snap(shots_dir, "audit_11_board_4_3.png")
+
 	if current_screen != null:
 		current_screen.free()
 		current_screen = null
@@ -378,6 +440,8 @@ func _run_live_playtest() -> void:
 	var board: TCGMatchScene = current_screen as TCGMatchScene
 	assert(board != null and board.game_state != null, "Expected TCGMatchScene with active state")
 	board.game_speed = 4.0
+	if board.input_controller != null:
+		board.input_controller.debounce_ms = 0
 	print("[Playtest] 3. Match started | First player: %s | Intro active: %s" % [board._who(board.game_state.first_player), str(board.intro_active())])
 	assert(board.intro_active(), "Expected Coin Toss intro to be active")
 	board._intro_t = 1.6
@@ -420,7 +484,6 @@ func _run_live_playtest() -> void:
 		elif not s.pending.is_empty() or (s.phase == "setup" and s.players[0].mull_done):
 			var alive := s.players[0].get_alive_indices()
 			if not alive.is_empty():
-				board._on_char_slot_clicked(0, alive[0])
 				board._on_char_slot_clicked(0, alive[0])
 				actions_taken += 1
 		elif s.phase == "roll":

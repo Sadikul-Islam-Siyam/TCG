@@ -45,10 +45,21 @@ func heal(n: int, idx: int = -1) -> void:
 		return
 	var c := p.characters[target_idx]
 	if not c.defeated:
+		var old_hp: int = c.hp
 		var defn: CardDataSystem.CharData = c.get_defn()
 		var max_hp: int = defn.hp if defn != null else 10
 		c.hp = mini(max_hp, c.hp + n)
 		s.add_event("heal", {"player": pi, "char": target_idx, "amount": n})
+		s.add_game_event(GameEvent.make(
+			GameEvent.Type.HEAL_APPLIED,
+			pi,
+			target_idx,
+			c.name,
+			"",
+			n,
+			old_hp,
+			c.hp
+		))
 
 
 func summon(summon_name: String) -> void:
@@ -58,29 +69,40 @@ func summon(summon_name: String) -> void:
 		return
 	for u in p.summons:
 		if u.name == summon_name:
+			var old_u := u.usages
 			u.usages = d.usages
+			s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_CHANGED, pi, -1, summon_name, d.element, d.usages, old_u, u.usages, "summon"))
 			return
 	if p.summons.size() >= CardDataSystem.MAX_SUMMONS:
+		var evicted := p.summons[0]
 		p.summons.pop_front()
+		s.add_game_event(GameEvent.make(GameEvent.Type.SUMMON_REMOVED, pi, -1, evicted.name))
 	p.summons.append(TCGPlayerSystem.UnitInstance.new(summon_name, d.usages))
 	s.add_event("summon", {"player": pi, "name": summon_name})
+	s.add_game_event(GameEvent.make(GameEvent.Type.SUMMON_ADDED, pi, -1, summon_name, d.element, d.damage, 0, d.usages))
 
 
 func combat_status(status_name: String) -> void:
-	TCGRulesEngine.add_status(me().combat, status_name)
+	var st := TCGRulesEngine.add_status(me().combat, status_name)
+	if st != null:
+		s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_ADDED, pi, -1, status_name, "", st.usages, null, st.usages, "combat"))
 
 
 func char_status(status_name: String, idx: int = -1) -> void:
 	var p := me()
 	var target_idx: int = p.active if idx < 0 else idx
 	if target_idx >= 0 and target_idx < p.characters.size() and not p.characters[target_idx].defeated:
-		TCGRulesEngine.add_status(p.characters[target_idx].statuses, status_name)
+		var st := TCGRulesEngine.add_status(p.characters[target_idx].statuses, status_name)
+		if st != null:
+			s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_ADDED, pi, target_idx, status_name, "", st.usages, null, st.usages, "char"))
 
 
 func foe_char_status(status_name: String) -> void:
 	var t: int = TCGRulesEngine.foe_target(s, pi)
 	if t >= 0:
-		TCGRulesEngine.add_status(foe().characters[t].statuses, status_name)
+		var st := TCGRulesEngine.add_status(foe().characters[t].statuses, status_name)
+		if st != null:
+			s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_ADDED, 1 - pi, t, status_name, "", st.usages, null, st.usages, "char"))
 
 
 func force_switch_foe() -> void:
@@ -92,11 +114,15 @@ func draw(n: int) -> void:
 
 
 func gain_energy(n: int) -> void:
-	var ch := me().get_active_char()
+	var p := me()
+	var ch := p.get_active_char()
 	if ch != null:
+		var old_en := ch.energy
 		var defn: CardDataSystem.CharData = ch.get_defn()
 		var max_en: int = defn.max_energy if defn != null else 3
 		ch.energy = mini(max_en, ch.energy + n)
+		if ch.energy != old_en:
+			s.add_game_event(GameEvent.make(GameEvent.Type.ENERGY_CHANGED, pi, p.active, ch.name, "", ch.energy - old_en, old_en, ch.energy, "", -1, -1, {"max": max_en}))
 
 
 func heal_most_injured(n: int) -> void:

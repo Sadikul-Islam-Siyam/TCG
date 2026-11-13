@@ -74,7 +74,9 @@ var pending: Array[int] = []         # Players who must immediately choose a new
 var winner: int = -2                 # -2 = None (ongoing), -1 = Draw, 0 = Player 0, 1 = Player 1
 
 var log: Array[String] = []
-var events: Array[Dictionary] = []   # Structured events for the UI to animate: {"kind": String, ...}
+var events: Array[Dictionary] = []   # Legacy event dicts preserved for stage tests
+var game_events: Array = []          # Phase 1 GameEvent stream for AnimationQueue
+var track_events: bool = true        # Disabled automatically inside AI .clone() calls
 
 
 func _init(p_rng: RandomNumberGenerator = null) -> void:
@@ -93,6 +95,8 @@ func _init(p_rng: RandomNumberGenerator = null) -> void:
 	winner = -2
 	log = []
 	events = []
+	game_events = []
+	track_events = true
 
 
 func is_game_over() -> bool:
@@ -103,6 +107,11 @@ func add_event(kind: String, info: Dictionary = {}) -> void:
 	var ev := info.duplicate()
 	ev["kind"] = kind
 	events.append(ev)
+
+
+func add_game_event(ge: RefCounted) -> void:
+	if track_events and ge != null:
+		game_events.append(ge)
 
 
 func add_log(entry: String) -> void:
@@ -136,5 +145,7 @@ func clone(keep_log: bool = false, share_rng: bool = false) -> TCGGameState:
 	else:
 		g.log.clear()
 	g.events.clear()
+	g.game_events.clear()
+	g.track_events = false
 	return g
 

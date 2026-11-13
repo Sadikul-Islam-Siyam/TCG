@@ -53,11 +53,13 @@ func _process(delta: float) -> void:
 
 
 func _button_rect(idx: int) -> Rect2:
-	var cx: float = size.x * 0.5
-	var bw: float = 380.0
-	var bh: float = 52.0
-	var y0: float = 240.0
-	return Rect2(cx - bw * 0.5, y0 + float(idx) * 66.0, bw, bh)
+	var sz := Vector2(maxf(size.x, float(TCGTheme.W)), maxf(size.y, float(TCGTheme.H)))
+	var safe := UIConstants.get_safe_rect(sz)
+	var cx: float = safe.get_center().x
+	var bw: float = clampf(safe.size.x * 0.26, 420.0, 520.0)
+	var bh: float = clampf(safe.size.y * 0.068, 60.0, 76.0)
+	var y0: float = safe.position.y + safe.size.y * 0.36
+	return Rect2(cx - bw * 0.5, y0 + float(idx) * (bh + 20.0), bw, bh)
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -94,21 +96,25 @@ func _draw() -> void:
 		TCGArt.draw_elem_symbol(self, el, Vector2(fx, fy), fr, TCGTheme.elem_color(el), false)
 
 	# Title Banner Plaque
-	var cx: float = w * 0.5
-	var title_box := Rect2(cx - 350.0, 58.0, 700.0, 142.0)
+	var safe := UIConstants.get_safe_rect(Vector2(w, h))
+	var cx: float = safe.get_center().x
+	var tb_w: float = clampf(safe.size.x * 0.52, 680.0, 920.0)
+	var tb_h: float = clampf(safe.size.y * 0.18, 150.0, 195.0)
+	var tb_y: float = safe.position.y + safe.size.y * 0.08
+	var title_box := Rect2(cx - tb_w * 0.5, tb_y, tb_w, tb_h)
 	TCGTheme.draw_gold_frame(self, title_box, Color(0.07, 0.11, 0.18, 0.90), 16, true)
 
 	# Six element gems flanking the title
 	var elems: PackedStringArray = CardDataSystem.ELEMENTS
 	for i in range(elems.size()):
-		var ex: float = cx - 125.0 + float(i) * 50.0
-		TCGArt.draw_elem_symbol(self, elems[i], Vector2(ex, 84.0), 9.0)
+		var ex: float = cx - 150.0 + float(i) * 60.0
+		TCGArt.draw_elem_symbol(self, elems[i], Vector2(ex, tb_y + 30.0), 11.0)
 
 	TCGTheme.draw_text_centered(
 		self,
 		"GENIUS INVOKATION",
-		Vector2(cx, 128.0),
-		46,
+		Vector2(cx, tb_y + tb_h * 0.52),
+		UIConstants.FONT_TITLE + 6,
 		TCGTheme.GOLD_L,
 		true,
 		true
@@ -116,8 +122,8 @@ func _draw() -> void:
 	TCGTheme.draw_text_centered(
 		self,
 		"a fan-made card game · Godot 4.7.2 + GDScript",
-		Vector2(cx, 172.0),
-		16,
+		Vector2(cx, tb_y + tb_h * 0.80),
+		UIConstants.FONT_BODY + 2,
 		TCGTheme.DIM,
 		false,
 		true
@@ -134,8 +140,8 @@ func _draw() -> void:
 	TCGTheme.draw_text_centered(
 		self,
 		"10 Characters · 30 Action Cards · 6 Preset Decks · Full Elemental Reactions & CSP Solver",
-		Vector2(cx, h - 24.0),
-		13,
+		Vector2(cx, h - 28.0),
+		15,
 		TCGTheme.DIM,
 		false,
 		true

@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ElementData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/cards/element_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"Anemo"
+display_name = "Anemo"
+color = Color(0.439216, 0.909804, 0.764706, 1)
+light_color = Color(0.768627, 0.988235, 0.921569, 1)
+dark_color = Color(0.094118, 0.282353, 0.25098, 1)
+can_attach = false
+shape_tag = "swirl"
+

@@ -6,12 +6,12 @@ extends Control
 
 signal return_to_menu_requested()
 
-const CW: float = 120.0
-const CH: float = 190.0
-const CHAR_X0: float = 440.0
-const CHAR_STEP: float = 140.0
-const FOE_Y: float = 100.0
-const OWN_Y: float = 400.0
+const CW: float = 156.0
+const CH: float = 266.0
+const CHAR_X0: float = 656.0
+const CHAR_STEP: float = 186.0
+const FOE_Y: float = 88.0
+const OWN_Y: float = 554.0
 
 const REACT_DESC: Dictionary = {
 	"Vaporize": "+1 DMG (Hydro + Pyro)",
@@ -33,6 +33,7 @@ var hotseat: bool = false
 var view_player: int = 0
 var reveal_opponent_hand: bool = false
 var game_speed: float = 1.0
+var confirm_before_end_round: bool = false
 
 var game_state: TCGGameState = null
 var lifecycle: TCGMatchLifecycle = null
@@ -48,10 +49,19 @@ var foe_supports_grid: TCGZoneGrid = null
 var foe_summons_grid: TCGZoneGrid = null
 var own_char_slots: Array[TCGCharacterSlot] = []
 var foe_char_slots: Array[TCGCharacterSlot] = []
+var own_combat_row: CombatStatusRow = null
+var foe_combat_row: CombatStatusRow = null
 var dice_tray: TCGDiceTray = null
 var skill_bar: TCGSkillBar = null
 var battle_log: TCGBattleLogPanel = null
 var hand_strip: TCGHandStrip = null
+
+# Phase 1, 8, 9, 10, 12 Architecture Subsystems
+var animation_queue: AnimationQueue = null
+var input_controller: TCGInputController = null
+var vfx_pool: VFXPool = null
+var detail_drawer: DetailDrawer = null
+var settings_modal: SettingsModal = null
 
 # Player Selection & Interaction States
 var selected_hand_index: int = -1      # Selected hand card awaiting target click or play
@@ -67,11 +77,14 @@ var _hovered_skill_idx: int = -1
 var _hovered_card_name: String = ""
 var _hovered_zone_info: Dictionary = {}
 var _hovered_status_payload: Dictionary = {}
+var _hover_mouse_pos: Vector2 = Vector2.ZERO
 var _inspected: Dictionary = {}            # {"kind": "char"|"skill"|"zone"|"status", ...}
+var _active_preview: Dictionary = {}       # Non-mutating expected DMG / reaction / heal preview
 var _inspect_extra_open: bool = false
 var _inspect_btn_hovered: bool = false
 var _end_phase_hovered: bool = false
 var _pause_hovered: bool = false
+var _skip_hovered: bool = false
 var _action_btn_hovered: bool = false
 var _pay_btn_hovered: int = -1         # 0 = cancel, 1 = confirm
 var _pay_die_hovered: int = -1
@@ -81,6 +94,9 @@ var _over_hover_idx: int = -1
 var _intro_t: float = INTRO_DUR
 var _hotseat_cover: int = -1
 var _busy_timer: float = 0.0
+var _turn_timer: float = 45.0
+var _last_turn_actor: int = -1
+var _clock: float = 0.0
 
 # Lightweight Visual FX & Toasts (strictly separated from rules evaluation)
 var _toasts: Array[Dictionary] = []    # {"text": String, "col": Color, "ttl": float}
@@ -88,6 +104,7 @@ var _floaters: Array[Dictionary] = []  # {"text": String, "pos": Vector2, "col":
 var _reaction_pills: Array[Dictionary] = [] # {"title": String, "sub": String, "elements": Array, "pos": Vector2, "t": float, "dur": float}
 var _ribbons: Array[Dictionary] = []        # {"title": String, "sub": String, "accent": Color, "pos": Vector2, "t": float, "dur": float, "mine": bool}
 var _banners: Array[Dictionary] = []        # {"title": String, "sub": String, "color": Color, "y": float, "t": float, "dur": float}
+var _card_preview: Dictionary = {}          # {"card_name": String, "t": float, "dur": float}
 var _burst_flash_alpha: float = 0.0
 var _lunges: Dictionary = {}                # "p_i" -> float remaining seconds
 var _flying_cards: Array[Dictionary] = [] # {"card_name": String, "from": Vector2, "to": Vector2, "t": float, "dur": float}
@@ -95,9 +112,9 @@ var _hit_flash: Dictionary = {}        # "p_i" -> float remaining seconds
 var _ai_timer: float = 0.72
 var _own_slot_targets: Array[Vector2] = []
 var _foe_slot_targets: Array[Vector2] = []
-var _hand_target_pos: Vector2 = Vector2(246, 544)
+var _hand_target_pos: Vector2 = Vector2(460, 840)
 var _slots_initialized: bool = false
-
+var _lay: Dictionary = {}
 
 var _overlay_canvas: Control = null
 
@@ -111,42 +128,208 @@ func _ready() -> void:
 		start_demo_match("pve", 0, 1, 42)
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_compute_board_layout()
+		if detail_drawer != null:
+			detail_drawer.sync_layout(_vp_size())
+		if settings_modal != null:
+			settings_modal.sync_layout(_vp_size())
+		if is_inside_tree() and game_state != null:
+			sync_from_state()
+
+
+func _vp_size() -> Vector2:
+	if size.x > 64.0 and size.y > 64.0:
+		return size
+	return Vector2(float(UIConstants.BASE_W), float(UIConstants.BASE_H))
+
+
+func _compute_board_layout(override_size: Vector2 = Vector2.ZERO) -> Dictionary:
+	var vp := override_size if override_size.x > 64.0 else _vp_size()
+	var safe := UIConstants.get_safe_rect(vp)
+	var cx := safe.get_center().x
+	var cy := safe.get_center().y
+	var left_x := safe.position.x + 10.0
+
+	var foe_hud_pos := Vector2(left_x, safe.position.y + 4.0)
+	var own_hud_pos := Vector2(left_x, safe.end.y - 76.0)
+	var battle_log_pos := Vector2(left_x, safe.position.y + 80.0)
+	var foe_deck_rect := Rect2(left_x + 12.0, safe.position.y + 148.0, 82.0, 114.0)
+	var end_round_rect := Rect2(left_x + 10.0, safe.position.y + 392.0, 114.0, 114.0)
+	var own_deck_rect := Rect2(left_x + 12.0, safe.position.y + 628.0, 82.0, 114.0)
+
+	var dice_tray_pos := Vector2(safe.end.x - 126.0, safe.position.y + 78.0)
+	var pause_btn_rect := Rect2(safe.end.x - 58.0, safe.position.y + 6.0, 52.0, 52.0)
+	var skip_btn_rect := Rect2(safe.end.x - 150.0, safe.position.y + 10.0, 84.0, 38.0)
+	var skill_bar_pos := Vector2(safe.end.x - 328.0, safe.end.y - 166.0)
+
+	var arena_left := left_x + 234.0
+	var arena_right := dice_tray_pos.x - 16.0
+	var arena_w := maxf(960.0, arena_right - arena_left)
+	var grid_w := 246.0
+	var gap := clampf((arena_w - grid_w * 2.0 - CW * 3.0) * 0.22, 16.0, 56.0)
+	var char_step := CW + clampf(gap * 0.65, 14.0, 40.0)
+	var char_span_half := char_step + CW * 0.5
+	var half_arena_need := char_span_half + gap + grid_w
+	var row_cx := clampf(cx, arena_left + half_arena_need, arena_right - half_arena_need)
+	var char_x0 := row_cx - char_span_half
+
+	var foe_y_base := safe.position.y + 74.0
+	var own_y_base := safe.position.y + 540.0
+	var foe_summons_pos := Vector2(row_cx - char_span_half - gap - grid_w, foe_y_base + 14.0)
+	var foe_supports_pos := Vector2(row_cx + char_span_half + gap, foe_y_base + 14.0)
+	var own_supports_pos := Vector2(row_cx - char_span_half - gap - grid_w, own_y_base - 4.0)
+	var own_summons_pos := Vector2(row_cx + char_span_half + gap, own_y_base - 4.0)
+
+	var foe_combat_pos := Vector2(row_cx - 120.0, safe.position.y + 374.0)
+	var own_combat_pos := Vector2(row_cx - 120.0, safe.position.y + 466.0)
+
+	var hand_left_bound := own_hud_pos.x + 306.0
+	var hand_right_bound := skill_bar_pos.x - 16.0
+	var hand_w := clampf(hand_right_bound - hand_left_bound - 12.0, 600.0, 1120.0)
+	var hand_x := clampf(cx - hand_w * 0.5, hand_left_bound, hand_right_bound - hand_w)
+	var hand_normal_pos := Vector2(hand_x, safe.end.y - 234.0)
+	var hand_mull_pos := Vector2(cx - hand_w * 0.5, safe.position.y + 266.0)
+
+	var top_banner := Rect2(cx - 230.0, safe.position.y + 4.0, 460.0, 56.0)
+
+	_lay = {
+		"vp": vp,
+		"safe": safe,
+		"cx": cx,
+		"row_cx": row_cx,
+		"cy": cy,
+		"left_x": left_x,
+		"foe_hud_pos": foe_hud_pos,
+		"own_hud_pos": own_hud_pos,
+		"battle_log_pos": battle_log_pos,
+		"foe_deck_rect": foe_deck_rect,
+		"own_deck_rect": own_deck_rect,
+		"end_round_rect": end_round_rect,
+		"dice_tray_pos": dice_tray_pos,
+		"pause_btn_rect": pause_btn_rect,
+		"skip_btn_rect": skip_btn_rect,
+		"skill_bar_pos": skill_bar_pos,
+		"char_x0": char_x0,
+		"char_step": char_step,
+		"foe_y_base": foe_y_base,
+		"own_y_base": own_y_base,
+		"active_offset": 28.0,
+		"foe_summons_pos": foe_summons_pos,
+		"foe_supports_pos": foe_supports_pos,
+		"own_supports_pos": own_supports_pos,
+		"own_summons_pos": own_summons_pos,
+		"foe_combat_pos": foe_combat_pos,
+		"own_combat_pos": own_combat_pos,
+		"hand_w": hand_w,
+		"hand_normal_pos": hand_normal_pos,
+		"hand_mull_pos": hand_mull_pos,
+		"hand_drop_cancel_y": hand_normal_pos.y - 24.0,
+		"top_banner": top_banner,
+		"foe_hand_cx": cx + 336.0,
+		"mulligan_confirm_rect": Rect2(cx - 140.0, hand_mull_pos.y + 244.0, 280.0, 56.0),
+		"roll_confirm_rect": Rect2(safe.end.x - 208.0, dice_tray_pos.y + 552.0, 200.0, 46.0),
+		"card_detail_btn_rect": Rect2(safe.position.x + 18.0, safe.position.y + 566.0, 236.0, 40.0),
+		"play_preview_center": Vector2(row_cx, safe.position.y + 438.0),
+	}
+	return _lay
+
+
+func get_zone_layout_rects(override_size: Vector2 = Vector2.ZERO) -> Dictionary:
+	## Returns non-empty zone Rect2 boundaries for responsive UI verification (T0.1 / Phase 14).
+	var l := _compute_board_layout(override_size) if override_size.x > 64.0 else (_lay if not _lay.is_empty() else _compute_board_layout())
+	var hw: float = float(l["hand_w"])
+	var hpos: Vector2 = l["hand_normal_pos"]
+	var rcx: float = float(l.get("row_cx", l["cx"]))
+	var cstep: float = float(l["char_step"])
+	var cx0: float = float(l["char_x0"])
+	var fy: float = float(l["foe_y_base"])
+	var oy: float = float(l["own_y_base"])
+	return {
+		"safe": l["safe"],
+		"foe_hud": Rect2(l["foe_hud_pos"], Vector2(292, 70)),
+		"own_hud": Rect2(l["own_hud_pos"], Vector2(292, 70)),
+		"battle_log": Rect2(l["battle_log_pos"], Vector2(226, 52)),
+		"foe_deck": l["foe_deck_rect"],
+		"own_deck": l["own_deck_rect"],
+		"end_round": l["end_round_rect"],
+		"dice_tray": Rect2(l["dice_tray_pos"], Vector2(118, 540)),
+		"pause_btn": l["pause_btn_rect"],
+		"skill_bar": Rect2(l["skill_bar_pos"], Vector2(320, 138)),
+		"hand_strip": Rect2(hpos, Vector2(hw, 232)),
+		"top_banner": l["top_banner"],
+		"foe_summons": Rect2(l["foe_summons_pos"], Vector2(246, 262)),
+		"foe_supports": Rect2(l["foe_supports_pos"], Vector2(246, 262)),
+		"own_supports": Rect2(l["own_supports_pos"], Vector2(246, 262)),
+		"own_summons": Rect2(l["own_summons_pos"], Vector2(246, 262)),
+		"foe_char_0": Rect2(Vector2(cx0, fy), Vector2(CW, CH)),
+		"foe_char_1": Rect2(Vector2(cx0 + cstep, fy), Vector2(CW, CH)),
+		"foe_char_2": Rect2(Vector2(cx0 + cstep * 2.0, fy), Vector2(CW, CH)),
+		"own_char_0": Rect2(Vector2(cx0, oy), Vector2(CW, CH)),
+		"own_char_1": Rect2(Vector2(cx0 + cstep, oy), Vector2(CW, CH)),
+		"own_char_2": Rect2(Vector2(cx0 + cstep * 2.0, oy), Vector2(CW, CH)),
+		"foe_combat": Rect2(l["foe_combat_pos"], Vector2(240, 36)),
+		"own_combat": Rect2(l["own_combat_pos"], Vector2(240, 36)),
+		"play_preview": Rect2(Vector2(rcx - 96.0, l["safe"].position.y + 416.0), Vector2(192, 44)),
+	}
+
+
 func _build_board_components() -> void:
 	for child in get_children():
 		child.queue_free()
 	own_char_slots.clear()
 	foe_char_slots.clear()
+	_compute_board_layout()
+
+	# 0. Phase 1 / 8 Logic-UI Bridge & Input Guard
+	animation_queue = AnimationQueue.new()
+	animation_queue.name = "AnimationQueue"
+	add_child(animation_queue)
+	animation_queue.busy_changed.connect(_on_anim_queue_busy_changed)
+	animation_queue.resync_requested.connect(resync)
+	_register_animation_handlers()
+
+	input_controller = TCGInputController.new()
+	input_controller.name = "InputController"
+	add_child(input_controller)
 
 	# 1. Player & Opponent Status Banners
 	foe_hud = TCGPlayerHudBanner.new()
-	foe_hud.position = Vector2(24, 18)
+	foe_hud.position = _lay["foe_hud_pos"]
+	foe_hud.z_index = UIConstants.Z_SKILL_BAR
 	add_child(foe_hud)
 
 	own_hud = TCGPlayerHudBanner.new()
-	own_hud.position = Vector2(24, 658)
+	own_hud.position = _lay["own_hud_pos"]
+	own_hud.z_index = UIConstants.Z_SKILL_BAR
 	add_child(own_hud)
 
 	# 2. 2x2 Support & Summon Zone Grids (mirrored across sides)
 	foe_summons_grid = TCGZoneGrid.new()
-	foe_summons_grid.position = Vector2(208, 86)
+	foe_summons_grid.position = _lay["foe_summons_pos"]
+	foe_summons_grid.z_index = UIConstants.Z_CHARACTERS
 	foe_summons_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(1, is_sum, idx, u, hov))
 	foe_summons_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(1, is_sum, idx, u))
 	add_child(foe_summons_grid)
 
 	foe_supports_grid = TCGZoneGrid.new()
-	foe_supports_grid.position = Vector2(934, 86)
+	foe_supports_grid.position = _lay["foe_supports_pos"]
+	foe_supports_grid.z_index = UIConstants.Z_CHARACTERS
 	foe_supports_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(1, is_sum, idx, u, hov))
 	foe_supports_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(1, is_sum, idx, u))
 	add_child(foe_supports_grid)
 
 	own_supports_grid = TCGZoneGrid.new()
-	own_supports_grid.position = Vector2(208, 386)
+	own_supports_grid.position = _lay["own_supports_pos"]
+	own_supports_grid.z_index = UIConstants.Z_CHARACTERS
 	own_supports_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(0, is_sum, idx, u, hov))
 	own_supports_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(0, is_sum, idx, u))
 	add_child(own_supports_grid)
 
 	own_summons_grid = TCGZoneGrid.new()
-	own_summons_grid.position = Vector2(934, 386)
+	own_summons_grid.position = _lay["own_summons_pos"]
+	own_summons_grid.z_index = UIConstants.Z_CHARACTERS
 	own_summons_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(0, is_sum, idx, u, hov))
 	own_summons_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(0, is_sum, idx, u))
 	add_child(own_summons_grid)
@@ -154,6 +337,7 @@ func _build_board_components() -> void:
 	# 3. Character Slots (3 Opponent + 3 Player)
 	for i in range(3):
 		var f_slot := TCGCharacterSlot.new()
+		f_slot.z_index = UIConstants.Z_CHARACTERS
 		f_slot.slot_clicked.connect(_on_char_slot_clicked)
 		f_slot.slot_hovered.connect(_on_char_slot_hovered)
 		f_slot.status_icon_hovered.connect(_on_status_icon_hovered)
@@ -163,6 +347,7 @@ func _build_board_components() -> void:
 
 	for i in range(3):
 		var o_slot := TCGCharacterSlot.new()
+		o_slot.z_index = UIConstants.Z_CHARACTERS
 		o_slot.slot_clicked.connect(_on_char_slot_clicked)
 		o_slot.slot_hovered.connect(_on_char_slot_hovered)
 		o_slot.status_icon_hovered.connect(_on_status_icon_hovered)
@@ -170,41 +355,96 @@ func _build_board_components() -> void:
 		add_child(o_slot)
 		own_char_slots.append(o_slot)
 
-	# 4. Battle Log Panel (left side)
+	# 3b. Combat Status Icon Rows (T4.3)
+	foe_combat_row = CombatStatusRow.new()
+	foe_combat_row.position = _lay["foe_combat_pos"]
+	foe_combat_row.z_index = UIConstants.Z_STATUSES
+	foe_combat_row.status_clicked.connect(_on_status_icon_clicked)
+	add_child(foe_combat_row)
+
+	own_combat_row = CombatStatusRow.new()
+	own_combat_row.position = _lay["own_combat_pos"]
+	own_combat_row.z_index = UIConstants.Z_STATUSES
+	own_combat_row.status_clicked.connect(_on_status_icon_clicked)
+	add_child(own_combat_row)
+
+	# 4. Battle Log Drawer (left side)
 	battle_log = TCGBattleLogPanel.new()
-	battle_log.position = Vector2(14, 184)
+	battle_log.position = _lay["battle_log_pos"]
+	battle_log.z_index = UIConstants.Z_PANEL - 5
 	add_child(battle_log)
 
 	# 5. Dice Tray (right side)
 	dice_tray = TCGDiceTray.new()
-	dice_tray.position = Vector2(1200, 96)
+	dice_tray.position = _lay["dice_tray_pos"]
+	dice_tray.z_index = UIConstants.Z_HAND
 	dice_tray.die_clicked.connect(_on_tray_die_clicked)
 	add_child(dice_tray)
 
 	# 6. Skill Buttons Bar (bottom-right)
 	skill_bar = TCGSkillBar.new()
-	skill_bar.position = Vector2(974, 548)
-	skill_bar.z_index = 10
+	skill_bar.position = _lay["skill_bar_pos"]
+	skill_bar.z_index = UIConstants.Z_SKILL_BAR
 	skill_bar.skill_clicked.connect(_on_skill_clicked)
 	skill_bar.skill_hovered.connect(_on_skill_hovered)
 	add_child(skill_bar)
 
-	# 7. Hand Strip (bottom-center, separated from skill_bar so Normal Attack is never covered)
+	# 7. Hand Strip (bottom-center)
 	hand_strip = TCGHandStrip.new()
-	hand_strip.position = Vector2(174, 544)
+	hand_strip.position = _lay["hand_normal_pos"]
+	hand_strip.size = Vector2(float(_lay["hand_w"]), 232.0)
+	hand_strip.custom_minimum_size = hand_strip.size
+	hand_strip.z_index = UIConstants.Z_HAND
 	hand_strip.hand_card_clicked.connect(_on_hand_card_clicked)
 	hand_strip.hand_card_right_clicked.connect(_on_hand_card_right_clicked)
 	hand_strip.hand_card_drag_started.connect(_on_hand_card_drag_started)
 	hand_strip.hand_card_hovered.connect(_on_hand_card_hovered)
+	hand_strip.hand_card_long_pressed.connect(_on_hand_card_long_pressed)
 	add_child(hand_strip)
 
-	# 8. Top Overlay Layer (renders above all child controls: prompts, FX, dragged card, inspector, payment modal, toasts, pause/over)
+	# 8. Pooled VFX Overlay
+	vfx_pool = VFXPool.new()
+	vfx_pool.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vfx_pool.z_index = UIConstants.Z_PREVIEW + 10
+	add_child(vfx_pool)
+
+	# 9. Top Overlay Layer
 	_overlay_canvas = Control.new()
 	_overlay_canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_overlay_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_overlay_canvas.z_index = 100
+	_overlay_canvas.z_index = UIConstants.Z_BANNERS
 	_overlay_canvas.draw.connect(_draw_top_overlays)
 	add_child(_overlay_canvas)
+
+	# 10. Slide-In Detail & Glossary Drawer (T9.1 - T9.6)
+	detail_drawer = DetailDrawer.new()
+	detail_drawer.z_index = UIConstants.Z_PANEL
+	detail_drawer.sync_layout(_vp_size())
+	detail_drawer.outside_click_handler = Callable(self, "_on_detail_drawer_outside_click")
+	detail_drawer.drawer_closed.connect(func() -> void:
+		if not _inspected.is_empty():
+			_inspected.clear()
+			sync_from_state()
+	)
+	add_child(detail_drawer)
+
+	# 11. Settings Modal (T12.3)
+	settings_modal = SettingsModal.new()
+	settings_modal.z_index = UIConstants.Z_MODAL
+	settings_modal.sync_layout(_vp_size())
+	settings_modal.speed_changed.connect(set_animation_speed)
+	settings_modal.confirm_end_round_changed.connect(func(on: bool) -> void:
+		confirm_before_end_round = on
+	)
+	settings_modal.restart_requested.connect(restart_match)
+	settings_modal.main_menu_requested.connect(func() -> void:
+		return_to_menu_requested.emit()
+	)
+	settings_modal.closed.connect(func() -> void:
+		_pause_open = false
+		queue_redraw()
+	)
+	add_child(settings_modal)
 
 
 # ------------------------------------------------------------------------------
@@ -270,6 +510,7 @@ func start_match_with_decks(
 	_reaction_pills.clear()
 	_ribbons.clear()
 	_banners.clear()
+	_card_preview.clear()
 	_flying_cards.clear()
 	_hit_flash.clear()
 	_lunges.clear()
@@ -279,7 +520,19 @@ func start_match_with_decks(
 	_over_hover_idx = -1
 	_hotseat_cover = -1
 	_busy_timer = 0.0
+	_turn_timer = 45.0
+	_last_turn_actor = -1
 	_intro_t = 0.0 if (p_show_intro and not auto_advance_to_action) else INTRO_DUR
+	if animation_queue != null:
+		animation_queue.clear_queue()
+	if input_controller != null:
+		input_controller.reset()
+	if vfx_pool != null:
+		vfx_pool.clear_all()
+	if detail_drawer != null:
+		detail_drawer.close_immediate()
+	if settings_modal != null and settings_modal.visible:
+		settings_modal.close()
 
 	lifecycle = TCGMatchLifecycle.new()
 	lifecycle.start_match(chars_0, deck_0, chars_1, deck_1, rng_seed, ctrls)
@@ -301,6 +554,9 @@ func start_match_with_decks(
 				break
 			lifecycle.submit_action(legal[0])
 			guard += 1
+
+	if is_inside_tree() and AudioManager != null:
+		AudioManager.play_music(false)
 
 	sync_from_state()
 
@@ -429,23 +685,90 @@ func show_toast(msg: String, col: Color = TCGTheme.GOLD_L, dur: float = 2.4) -> 
 	queue_redraw()
 
 
+func resync() -> void:
+	## Phase 1 (T1.3): Hard state-to-visual resync called automatically after AnimationQueue drains.
+	sync_from_state()
+
+
+func set_animation_speed(speed_mult: float) -> void:
+	game_speed = speed_mult
+	if animation_queue != null:
+		animation_queue.set_speed(0.0 if speed_mult >= 8.0 else speed_mult)
+	if vfx_pool != null:
+		vfx_pool.set_speed(speed_mult)
+	show_toast("Animation speed: %s" % ("Instant" if speed_mult >= 8.0 else ("%.1f×" % speed_mult).replace(".0", "")), TCGTheme.GOLD_L, 1.4)
+
+
+func skip_animations() -> void:
+	if animation_queue != null:
+		animation_queue.skip_all()
+	_busy_timer = 0.0
+	_flying_cards.clear()
+	_card_preview.clear()
+	if vfx_pool != null:
+		vfx_pool.clear_all()
+	resync()
+
+
+func _on_anim_queue_busy_changed(busy: bool) -> void:
+	if input_controller != null:
+		input_controller.set_busy_locked(busy)
+	if hand_strip != null:
+		hand_strip.set_busy_locked(busy)
+	if skill_bar != null:
+		skill_bar.set_interactable(not busy)
+	queue_redraw()
+
+
+func _register_animation_handlers() -> void:
+	if animation_queue == null:
+		return
+	animation_queue.clear_handlers()
+	var noop_wait := func(_ev: GameEvent) -> void:
+		await animation_queue.wait_sec(0.05)
+	for t in [
+		GameEvent.Type.DAMAGE_DEALT,
+		GameEvent.Type.HEAL_APPLIED,
+		GameEvent.Type.SKILL_USED,
+		GameEvent.Type.REACTION_TRIGGERED,
+		GameEvent.Type.CHARACTER_SWITCHED,
+		GameEvent.Type.CARD_PLAYED,
+		GameEvent.Type.CHARACTER_DEFEATED,
+		GameEvent.Type.ROUND_STARTED,
+		GameEvent.Type.ROUND_ENDED,
+	]:
+		animation_queue.register_handler(t, noop_wait)
+
+
 # ------------------------------------------------------------------------------
 # Rules-Driven Action Execution & Event Presentation
 # ------------------------------------------------------------------------------
 func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 	## Submits an ActionData to TCGMatchLifecycle / TCGRulesEngine, records
 	## lightweight visual feedback from `events`, and synchronizes the board.
+	if input_controller != null:
+		input_controller.record_action()
 	var res: Dictionary = lifecycle.submit_action(action)
 	if not bool(res.get("ok", false)):
 		var err_str: String = String(res.get("error", "Illegal action"))
+		if is_inside_tree() and AudioManager != null:
+			AudioManager.play_sfx("ui_error")
 		show_toast("Can't do that: %s" % err_str, TCGTheme.RED)
 		sync_from_state()
 		return res
 
 	_present_events(res.get("events", []))
+	if game_state != null and is_inside_tree() and animation_queue != null and game_speed < 8.0:
+		var ev_stream: Array = game_state.consume_game_events() if game_state.has_method("consume_game_events") else []
+		if not ev_stream.is_empty():
+			animation_queue.push_many(ev_stream)
 	selected_hand_index = -1
 	_inspected.clear()
 	_inspect_extra_open = false
+	if detail_drawer != null:
+		detail_drawer.close_immediate()
+	if input_controller != null:
+		input_controller.enter_idle()
 	mulligan_swap_indices.clear()
 	roll_selected_dice.clear()
 	pay_pending.clear()
@@ -458,11 +781,33 @@ func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 		if game_state != null and game_state.phase != "over":
 			_hotseat_cover = next_actor
 
+	# Reset per-turn timer & tense music check (T11.5 / T13.3)
+	if next_actor != _last_turn_actor:
+		_last_turn_actor = next_actor
+		_turn_timer = 45.0
+	if is_inside_tree() and AudioManager != null and game_state != null:
+		var low_hp := false
+		for p in game_state.players:
+			for c in p.characters:
+				if not c.defeated and c.hp <= 4:
+					low_hp = true
+					break
+		AudioManager.play_music(game_state.round_number >= 4 or low_hp)
+		if game_state.phase == "over":
+			AudioManager.play_sfx("victory" if game_state.winner == view_player else "defeat")
+
 	sync_from_state()
 	return res
 
 
 func _present_events(events: Array) -> void:
+	if _lay.is_empty():
+		_compute_board_layout()
+	var cx: float = float(_lay.get("cx", 960.0))
+	var cy: float = float(_lay.get("cy", 540.0))
+	var ribbon_pos := Vector2(cx, cy - 110.0)
+	var banner_y: float = cy - 16.0
+
 	for ev in events:
 		var kind: String = String(ev.get("kind", ""))
 		match kind:
@@ -473,6 +818,9 @@ func _present_events(events: Array) -> void:
 				var dtype: String = String(ev.get("dtype", "Physical"))
 				var rx = ev.get("reaction", null)
 				var pos := _char_slot_center(tp, ti)
+				var slots := own_char_slots if tp == view_player else foe_char_slots
+				if ti >= 0 and ti < slots.size() and is_instance_valid(slots[ti]):
+					slots[ti].trigger_hp_delta(-amt)
 				_floaters.append({
 					"text": "-%d" % amt,
 					"pos": pos + Vector2(0, -10),
@@ -481,8 +829,18 @@ func _present_events(events: Array) -> void:
 					"ttl": 1.5,
 					"max_ttl": 1.5,
 				})
+				if vfx_pool != null:
+					vfx_pool.spawn_floating_number(pos + Vector2(0, -12), "-%d" % amt, dtype, false, 1.15 if amt >= 4 else 1.0)
+					vfx_pool.spawn_element_hit(pos, dtype, amt)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_element_hit(dtype)
 				if rx != null and not String(rx).is_empty():
 					var rx_name: String = String(rx)
+					if vfx_pool != null:
+						vfx_pool.spawn_reaction_fx(pos, rx_name, amt)
+						vfx_pool.spawn_element_flight(pos + Vector2(-28, -42), pos, dtype)
+					if is_inside_tree() and AudioManager != null:
+						AudioManager.play_reaction(rx_name)
 					if TCGTheme.REACT.has(rx_name):
 						var r_info: Dictionary = TCGTheme.REACT[rx_name]
 						_reaction_pills.append({
@@ -508,6 +866,9 @@ func _present_events(events: Array) -> void:
 				var ti: int = int(ev.get("char", 0))
 				var amt: int = int(ev.get("amount", 0))
 				var pos := _char_slot_center(tp, ti)
+				var slots_h := own_char_slots if tp == view_player else foe_char_slots
+				if ti >= 0 and ti < slots_h.size() and is_instance_valid(slots_h[ti]):
+					slots_h[ti].trigger_hp_delta(amt)
 				_floaters.append({
 					"text": "+%d" % amt,
 					"pos": pos + Vector2(0, -14),
@@ -516,6 +877,10 @@ func _present_events(events: Array) -> void:
 					"ttl": 1.4,
 					"max_ttl": 1.4,
 				})
+				if vfx_pool != null:
+					vfx_pool.spawn_floating_number(pos + Vector2(0, -16), "+%d" % amt, "Hydro", true)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("heal")
 			"skill":
 				var sp: int = int(ev.get("player", 0))
 				var sc: int = int(ev.get("char", 0))
@@ -534,7 +899,7 @@ func _present_events(events: Array) -> void:
 					"title": sk_name,
 					"sub": "%s · %s%s" % [who, ch_obj.name, " · Elemental Burst" if is_burst else ""],
 					"accent": elem_col,
-					"pos": Vector2(640, 260),
+					"pos": ribbon_pos,
 					"t": 0.0,
 					"dur": 2.4 if is_burst else 1.85,
 					"mine": (sp == view_player),
@@ -542,6 +907,10 @@ func _present_events(events: Array) -> void:
 				_busy_timer = maxf(_busy_timer, 1.35 if is_burst else 0.90)
 				if is_burst:
 					_burst_flash_alpha = 0.65
+					if is_inside_tree() and AudioManager != null:
+						AudioManager.play_sfx("burst")
+				elif is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("dice_spend")
 			"switch":
 				var sw_p: int = int(ev.get("player", 0))
 				var sw_c: int = int(ev.get("char", 0))
@@ -552,35 +921,48 @@ func _present_events(events: Array) -> void:
 					"title": "%s steps forward" % sw_ch.name,
 					"sub": "%s switched active character" % who,
 					"accent": elem_col,
-					"pos": Vector2(640, 260),
+					"pos": ribbon_pos,
 					"t": 0.0,
 					"dur": 1.65,
 					"mine": (sw_p == view_player),
 				})
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("card_hover")
 				_busy_timer = maxf(_busy_timer, 0.70)
 			"card":
 				var cname: String = String(ev.get("name", ""))
 				var cplayer: int = int(ev.get("player", 0))
-				var start_p := Vector2(640, 620) if cplayer == view_player else Vector2(640, 20)
+				var start_p := Vector2(cx, cy + 360.0) if cplayer == view_player else Vector2(cx, 56.0)
+				var dest_p: Vector2 = _lay.get("play_preview_center", Vector2(cx, cy - 84.0))
 				_flying_cards.append({
 					"card_name": cname,
 					"from": start_p,
-					"to": Vector2(640, 320),
+					"to": dest_p,
 					"t": 0.0,
 					"dur": 0.85,
 				})
+				_card_preview = {"card_name": cname, "t": 0.0, "dur": 0.95}
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("card_play")
 				_busy_timer = maxf(_busy_timer, 0.65)
 			"summon":
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("ui_click")
 				show_toast("Summoned %s" % String(ev.get("name", "")), TCGTheme.TEAL, 1.8)
 			"defeat":
 				var dp: int = int(ev.get("player", 0))
 				var di: int = int(ev.get("char", 0))
 				var dch := game_state.players[dp].characters[di]
+				var dpos := _char_slot_center(dp, di)
+				if vfx_pool != null:
+					vfx_pool.spawn_defeat_seal(dpos)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("defeat")
 				_ribbons.append({
 					"title": "%s was defeated" % dch.name,
 					"sub": "",
 					"accent": TCGTheme.RED,
-					"pos": Vector2(640, 260),
+					"pos": ribbon_pos,
 					"t": 0.0,
 					"dur": 1.8,
 					"mine": (dp == view_player),
@@ -594,7 +976,7 @@ func _present_events(events: Array) -> void:
 						"title": "Action Phase",
 						"sub": "Take turns. Declare End Round when you are done.",
 						"color": TCGTheme.GOLD,
-						"y": 350.0,
+						"y": banner_y,
 						"t": 0.0,
 						"dur": 1.85,
 					})
@@ -604,7 +986,7 @@ func _present_events(events: Array) -> void:
 						"title": "End Phase",
 						"sub": "Summons act, then both players draw 2 cards",
 						"color": TCGTheme.GOLD,
-						"y": 350.0,
+						"y": banner_y,
 						"t": 0.0,
 						"dur": 1.85,
 					})
@@ -613,17 +995,17 @@ func _present_events(events: Array) -> void:
 				var rnum: int = int(ev.get("number", 1))
 				if dice_tray != null:
 					dice_tray.trigger_roll([], 0.78)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("dice_roll")
 				_banners.append({
 					"title": "Round %d" % rnum,
 					"sub": "Roll Phase",
 					"color": TCGTheme.GOLD_L,
-					"y": 350.0,
+					"y": banner_y,
 					"t": 0.0,
 					"dur": 1.9,
 				})
 				_busy_timer = maxf(_busy_timer, 0.85)
-				if dice_tray != null:
-					dice_tray.trigger_roll()
 			"end_round":
 				var ep: int = int(ev.get("player", 0))
 				var who: String = _who(ep)
@@ -631,7 +1013,7 @@ func _present_events(events: Array) -> void:
 					"title": "%s ended the round" % who,
 					"sub": "",
 					"accent": TCGTheme.DIM,
-					"pos": Vector2(640, 260),
+					"pos": ribbon_pos,
 					"t": 0.0,
 					"dur": 1.4,
 					"mine": (ep == view_player),
@@ -643,7 +1025,7 @@ func _char_slot_center(p_idx: int, c_idx: int) -> Vector2:
 	var slots := own_char_slots if p_idx == view_player else foe_char_slots
 	if c_idx >= 0 and c_idx < slots.size():
 		return slots[c_idx].position + slots[c_idx].size * 0.5
-	return Vector2(640, 360)
+	return Vector2(float(_lay.get("cx", 960.0)), float(_lay.get("cy", 540.0)))
 
 
 # ------------------------------------------------------------------------------
@@ -901,6 +1283,7 @@ func sync_from_state() -> void:
 	if game_state == null:
 		return
 
+	_compute_board_layout()
 	legal_actions = TCGRulesEngine.legal_actions(game_state)
 
 	var p_own: TCGPlayerSystem.PlayerState = game_state.players[view_player]
@@ -914,34 +1297,52 @@ func sync_from_state() -> void:
 		c_foe = p_foe.characters[0]
 
 	var act_actor: int = actor()
+	var own_elem: String = c_own.get_defn().element if (c_own != null and c_own.get_defn() != null) else "Omni"
+	var foe_elem: String = c_foe.get_defn().element if (c_foe != null and c_foe.get_defn() != null) else "Omni"
 
-	# 1. Update HUD Banners
-	own_hud.setup(
-		0,
-		player_labels[view_player],
-		c_own.name if c_own != null else "None",
-		c_own.get_defn().element if c_own != null else "Omni",
-		act_actor == view_player and game_state.phase == "action",
-		p_own.ended,
-		false,
-		p_own.dice.size()
-	)
-	foe_hud.setup(
-		1,
-		player_labels[1 - view_player],
-		c_foe.name if c_foe != null else "None",
-		c_foe.get_defn().element if c_foe != null else "Omni",
-		act_actor == (1 - view_player) and game_state.phase == "action",
-		p_foe.ended,
-		true,
-		p_foe.dice.size()
-	)
+	# Position responsive child zones inside safe area
+	if own_hud != null:
+		own_hud.position = _lay["own_hud_pos"]
+		own_hud.setup(
+			0,
+			player_labels[view_player],
+			c_own.name if c_own != null else "None",
+			own_elem,
+			act_actor == view_player and game_state.phase == "action",
+			p_own.ended,
+			false,
+			p_own.dice.size(),
+			p_own.hand.size(),
+			p_own.ended and not p_foe.ended
+		)
+	if foe_hud != null:
+		foe_hud.position = _lay["foe_hud_pos"]
+		foe_hud.setup(
+			1,
+			player_labels[1 - view_player],
+			c_foe.name if c_foe != null else "None",
+			foe_elem,
+			act_actor == (1 - view_player) and game_state.phase == "action",
+			p_foe.ended,
+			true,
+			p_foe.dice.size(),
+			p_foe.hand.size(),
+			p_foe.ended and not p_own.ended
+		)
 
 	# 2. Update Support & Summon Zones
-	own_supports_grid.setup("SUPPORTS", false, p_own.supports)
-	own_summons_grid.setup("SUMMONS", true, p_own.summons)
-	foe_summons_grid.setup("SUMMONS", true, p_foe.summons)
-	foe_supports_grid.setup("SUPPORTS", false, p_foe.supports)
+	if foe_summons_grid != null:
+		foe_summons_grid.position = _lay["foe_summons_pos"]
+		foe_summons_grid.setup("SUMMONS", true, p_foe.summons)
+	if foe_supports_grid != null:
+		foe_supports_grid.position = _lay["foe_supports_pos"]
+		foe_supports_grid.setup("SUPPORTS", false, p_foe.supports)
+	if own_supports_grid != null:
+		own_supports_grid.position = _lay["own_supports_pos"]
+		own_supports_grid.setup("SUPPORTS", false, p_own.supports)
+	if own_summons_grid != null:
+		own_summons_grid.position = _lay["own_summons_pos"]
+		own_summons_grid.setup("SUMMONS", true, p_own.summons)
 
 	# 3. Determine valid character targets for selected/dragged card or switch/choose_active
 	var valid_char_targets: Dictionary = {}
@@ -956,33 +1357,61 @@ func sync_from_state() -> void:
 		for a in legal_actions:
 			if a.player == view_player and (a.type == "choose_active" or a.type == "switch"):
 				clickable_chars[a.index] = true
+				if a.type == "choose_active":
+					valid_char_targets[a.index] = true
 
-	# 4. Update Character Slots (smoothly interpolated in _process when live)
+	var own_team_shield := 0
+	for cs in p_own.combat:
+		own_team_shield += maxi(0, cs.shield)
+	var foe_team_shield := 0
+	for cs in p_foe.combat:
+		foe_team_shield += maxi(0, cs.shield)
+
+	# 3b. Compute non-mutating live preview of clicked/selected Skill, Card, or Pending Action
+	_active_preview = _compute_active_action_preview(active_card_idx, valid_char_targets)
+	var foe_prev_map: Dictionary = _active_preview.get("foe_chars", {}) if bool(_active_preview.get("ok", false)) else {}
+	var own_prev_map: Dictionary = _active_preview.get("own_chars", {}) if bool(_active_preview.get("ok", false)) else {}
+
+	# 4. Update Character Slots (T2.3 active offset +-34px, T3.8 shield totals, T3.11 invalid dim, combat forecast)
 	_foe_slot_targets.resize(3)
 	_own_slot_targets.resize(3)
 	var snap_layout: bool = (not _slots_initialized) or (not is_inside_tree())
+	var cx0: float = float(_lay["char_x0"])
+	var cstep: float = float(_lay["char_step"])
+	var fy_base: float = float(_lay["foe_y_base"])
+	var oy_base: float = float(_lay["own_y_base"])
+	var act_off: float = float(_lay["active_offset"])
+	var has_target_mode: bool = (not valid_char_targets.is_empty())
+
 	for i in range(3):
 		var slot_idx_foe: int = 2 - i
-		var x_foe: float = CHAR_X0 + float(slot_idx_foe) * CHAR_STEP
+		var x_foe: float = cx0 + float(slot_idx_foe) * cstep
 		var is_act_foe: bool = (p_foe.active == i)
-		var y_foe: float = FOE_Y + (14.0 if is_act_foe else 0.0)
+		var y_foe: float = fy_base + (act_off if is_act_foe else 0.0)
 		_foe_slot_targets[i] = Vector2(x_foe, y_foe)
 		if snap_layout:
 			foe_char_slots[i].position = _foe_slot_targets[i]
 		var f_flash: float = float(_hit_flash.get("%d_%d" % [1 - view_player, i], 0.0))
 		var f_lunge_t: float = float(_lunges.get("%d_%d" % [1 - view_player, i], 0.0))
-		var f_lunge_offset := Vector2(0.0, sin((1.0 - f_lunge_t / 0.55) * PI) * 20.0) if f_lunge_t > 0.0 else Vector2.ZERO
-		foe_char_slots[i].setup(1, i, p_foe.characters[i], is_act_foe, false, false, false, -1, f_flash, f_lunge_offset)
+		var f_lunge_offset := Vector2(0.0, sin((1.0 - f_lunge_t / 0.55) * PI) * 24.0) if f_lunge_t > 0.0 else Vector2.ZERO
+		var f_sh := foe_team_shield if is_act_foe else 0
+		for fst in p_foe.characters[i].statuses:
+			f_sh += maxi(0, fst.shield)
+		foe_char_slots[i].setup(1, i, p_foe.characters[i], is_act_foe, false, false, false, -1, f_flash, f_lunge_offset, f_sh, false, foe_prev_map.get(i, {}))
 
-		var x_own: float = CHAR_X0 + float(i) * CHAR_STEP
+		var x_own: float = cx0 + float(i) * cstep
 		var is_act_own: bool = (p_own.active == i)
-		var y_own: float = OWN_Y - (14.0 if is_act_own else 0.0)
+		var y_own: float = oy_base - (act_off if is_act_own else 0.0)
 		_own_slot_targets[i] = Vector2(x_own, y_own)
 		if snap_layout:
 			own_char_slots[i].position = _own_slot_targets[i]
 		var o_flash: float = float(_hit_flash.get("%d_%d" % [view_player, i], 0.0))
 		var o_lunge_t: float = float(_lunges.get("%d_%d" % [view_player, i], 0.0))
-		var o_lunge_offset := Vector2(0.0, -sin((1.0 - o_lunge_t / 0.55) * PI) * 20.0) if o_lunge_t > 0.0 else Vector2.ZERO
+		var o_lunge_offset := Vector2(0.0, -sin((1.0 - o_lunge_t / 0.55) * PI) * 24.0) if o_lunge_t > 0.0 else Vector2.ZERO
+		var o_sh := own_team_shield if is_act_own else 0
+		for ost in p_own.characters[i].statuses:
+			o_sh += maxi(0, ost.shield)
+		var dim_invalid := has_target_mode and not valid_char_targets.has(i)
 		own_char_slots[i].setup(
 			0,
 			i,
@@ -993,10 +1422,23 @@ func sync_from_state() -> void:
 			clickable_chars.has(i),
 			-1,
 			o_flash,
-			o_lunge_offset
+			o_lunge_offset,
+			o_sh,
+			dim_invalid,
+			own_prev_map.get(i, {})
 		)
 
-	# 5. Update Dice Tray
+	# 4b. Combat Status Icon Rows (T4.3)
+	if foe_combat_row != null:
+		foe_combat_row.position = _lay["foe_combat_pos"]
+		foe_combat_row.sync_statuses(p_foe.combat, foe_elem)
+	if own_combat_row != null:
+		own_combat_row.position = _lay["own_combat_pos"]
+		own_combat_row.sync_statuses(p_own.combat, own_elem)
+
+	# 5. Update Dice Tray (T6.1 - T6.7)
+	if dice_tray != null:
+		dice_tray.position = _lay["dice_tray_pos"]
 	var hl_dice: Array[int] = []
 	if is_my_turn() and _hovered_skill_idx >= 0:
 		for a in legal_actions:
@@ -1014,15 +1456,24 @@ func sync_from_state() -> void:
 	var tray_selected: Array[int] = []
 	if game_state.phase == "roll":
 		tray_selected = roll_selected_dice.duplicate()
+	var pay_need := 0
+	if not pay_pending.is_empty():
+		var pc: CardDataSystem.CostData = pay_pending.get("cost", null)
+		pay_need = 1 if bool(pay_pending.get("tune", false)) else (pc.total_dice() if pc != null else 0)
 	dice_tray.setup(
 		p_own.dice,
 		tray_selected,
 		hl_dice,
 		not drag_state.is_empty(),
-		tunable_dice(view_player)
+		tunable_dice(view_player),
+		own_elem,
+		pay_need,
+		p_own.rerolls
 	)
 
 	# 6. Update Skill Bar
+	if skill_bar != null:
+		skill_bar.position = _lay["skill_bar_pos"]
 	var skill_ok := [false, false, false]
 	for a in legal_actions:
 		if a.player == view_player and a.type == "skill" and a.index >= 0 and a.index < 3:
@@ -1054,10 +1505,14 @@ func sync_from_state() -> void:
 
 	var in_mulligan: bool = is_mulligan_stage() and not intro_active()
 	hand_strip.visible = not (intro_active() and game_state.phase != "over")
-	_hand_target_pos = Vector2(250, 250) if in_mulligan else Vector2(174, 544)
+	hand_strip.size = Vector2(float(_lay["hand_w"]), 232.0)
+	hand_strip.custom_minimum_size = hand_strip.size
+	_hand_target_pos = _lay["hand_mull_pos"] if in_mulligan else _lay["hand_normal_pos"]
 	if (not _slots_initialized) or (not is_inside_tree()):
 		hand_strip.position = _hand_target_pos
 		_slots_initialized = true
+	var deck_r: Rect2 = _lay["own_deck_rect"]
+	hand_strip.set_draw_origin(deck_r.get_center() - hand_strip.position)
 	hand_strip.setup(
 		p_own.hand,
 		playable_cards,
@@ -1065,20 +1520,60 @@ func sync_from_state() -> void:
 		mulligan_swap_indices,
 		in_mulligan,
 		(not human_flags[view_player] and not reveal_opponent_hand) or _hotseat_cover >= 0,
-		int(drag_state.get("hand_index", -1))
+		int(drag_state.get("hand_index", -1)),
+		is_my_turn() and game_state.phase == "action" and not in_mulligan
 	)
 
 	# 8. Update Battle Log
-	battle_log.setup(game_state.log)
+	if battle_log != null:
+		battle_log.position = _lay["battle_log_pos"]
+		battle_log.setup(game_state.log)
 
 	queue_redraw()
+
+
+func _compute_active_action_preview(active_card_idx: int, valid_char_targets: Dictionary) -> Dictionary:
+	if game_state == null or game_state.phase == "over" or game_state.phase == "setup":
+		return {}
+
+	var res: Dictionary = {}
+	if not pay_pending.is_empty() and not bool(pay_pending.get("tune", false)):
+		var pact = pay_pending.get("action", null)
+		if pact is TCGGameState.ActionData:
+			var ad := pact as TCGGameState.ActionData
+			if ad.type == "skill":
+				res = TCGRulesEngine.preview_skill(game_state, view_player, ad.index)
+			elif ad.type == "card":
+				res = TCGRulesEngine.preview_card(game_state, view_player, ad.index, ad.target)
+	elif String(_inspected.get("kind", "")) == "skill":
+		var sk_idx: int = int(_inspected.get("index", -1))
+		if sk_idx >= 0:
+			res = TCGRulesEngine.preview_skill(game_state, view_player, sk_idx)
+	elif active_card_idx >= 0 and active_card_idx < me().hand.size():
+		var tgt_idx: int = _hovered_char_idx if (_hovered_char_side == 0 and valid_char_targets.has(_hovered_char_idx)) else -1
+		res = TCGRulesEngine.preview_card(game_state, view_player, active_card_idx, tgt_idx)
+
+	if bool(res.get("ok", false)) and not is_my_turn() and game_state.phase == "action":
+		res["can_use_now"] = false
+		if String(res.get("block_reason", "")).is_empty():
+			res["block_reason"] = "Wait for your turn"
+			var lines: Array = res.get("summary_lines", [])
+			lines.append("Note: Wait for your turn")
+			res["summary_lines"] = lines
+	return res
 
 
 # ------------------------------------------------------------------------------
 # Process Loop (Animations & AI Turn Execution)
 # ------------------------------------------------------------------------------
 func _process(delta: float) -> void:
+	_clock += delta
 	var dirty: bool = false
+
+	# Advance Turn Timer cleanly when human is acting in Action/Roll Phase (T11.5)
+	if game_state != null and game_state.phase in ["action", "roll"] and is_my_turn() and not _pause_open and not intro_active() and _hotseat_cover < 0:
+		_turn_timer = maxf(0.0, _turn_timer - delta)
+		dirty = true
 
 	# Smoothly glide character slots and hand strip toward their layout targets
 	var k_pos: float = 1.0 - exp(-12.0 * delta * game_speed)
@@ -1090,6 +1585,13 @@ func _process(delta: float) -> void:
 				own_char_slots[i].position = own_char_slots[i].position.lerp(_own_slot_targets[i], k_pos)
 	if hand_strip != null and not hand_strip.position.is_equal_approx(_hand_target_pos):
 		hand_strip.position = hand_strip.position.lerp(_hand_target_pos, k_pos)
+
+	# Center play card preview TTL (T5.9)
+	if not _card_preview.is_empty():
+		_card_preview["t"] = float(_card_preview["t"]) + delta * game_speed
+		if float(_card_preview["t"]) >= float(_card_preview["dur"]):
+			_card_preview.clear()
+		dirty = true
 
 	# Update toast timers
 	for i in range(_toasts.size() - 1, -1, -1):
@@ -1158,12 +1660,12 @@ func _process(delta: float) -> void:
 		for i in range(3):
 			var f_flash: float = float(_hit_flash.get("%d_%d" % [1 - view_player, i], 0.0))
 			var f_lunge_t: float = float(_lunges.get("%d_%d" % [1 - view_player, i], 0.0))
-			var f_lunge := Vector2(0.0, sin((1.0 - f_lunge_t / 0.55) * PI) * 20.0) if f_lunge_t > 0.0 else Vector2.ZERO
+			var f_lunge := Vector2(0.0, sin((1.0 - f_lunge_t / 0.55) * PI) * 24.0) if f_lunge_t > 0.0 else Vector2.ZERO
 			foe_char_slots[i].set_anim_state(f_flash, f_lunge)
 
 			var o_flash: float = float(_hit_flash.get("%d_%d" % [view_player, i], 0.0))
 			var o_lunge_t: float = float(_lunges.get("%d_%d" % [view_player, i], 0.0))
-			var o_lunge := Vector2(0.0, -sin((1.0 - o_lunge_t / 0.55) * PI) * 20.0) if o_lunge_t > 0.0 else Vector2.ZERO
+			var o_lunge := Vector2(0.0, -sin((1.0 - o_lunge_t / 0.55) * PI) * 24.0) if o_lunge_t > 0.0 else Vector2.ZERO
 			own_char_slots[i].set_anim_state(o_flash, o_lunge)
 
 	if _burst_flash_alpha > 0.001:
@@ -1192,12 +1694,31 @@ func _process(delta: float) -> void:
 					sync_from_state()
 					dirty = true
 
+	# Subtle periodic redraw for mat shimmer and turn timer pulse
+	if int(_clock * 12.0) != int((_clock - delta) * 12.0):
+		dirty = true
+
 	if dirty:
 		queue_redraw()
 
 
 func _is_ui_modal_blocking() -> bool:
-	return _pause_open or _hotseat_cover >= 0 or intro_active() or (game_state != null and game_state.phase == "over") or not pay_pending.is_empty()
+	return (
+		_pause_open
+		or (settings_modal != null and settings_modal.visible)
+		or _hotseat_cover >= 0
+		or intro_active()
+		or (game_state != null and game_state.phase == "over")
+		or not pay_pending.is_empty()
+	)
+
+
+func _is_gameplay_locked() -> bool:
+	if animation_queue != null and animation_queue.is_busy():
+		return true
+	if input_controller != null and not input_controller.can_accept_gameplay_input():
+		return true
+	return false
 
 
 # ------------------------------------------------------------------------------
@@ -1206,22 +1727,39 @@ func _is_ui_modal_blocking() -> bool:
 func _on_hand_card_clicked(hand_idx: int, _card_name: String) -> void:
 	if _is_ui_modal_blocking():
 		return
+	if selected_hand_index == hand_idx and _is_gameplay_locked():
+		return
+	if is_inside_tree() and AudioManager != null:
+		AudioManager.play_sfx("ui_click")
 	select_or_play_hand_card(hand_idx, -2)
 
 
 func _on_hand_card_right_clicked(hand_idx: int, _card_name: String) -> void:
-	if _is_ui_modal_blocking():
+	if _is_ui_modal_blocking() or _is_gameplay_locked():
 		return
 	begin_tune(hand_idx)
 
 
+func _on_hand_card_long_pressed(_hand_idx: int, c_name: String) -> void:
+	if _is_ui_modal_blocking() or c_name.is_empty():
+		return
+	if detail_drawer != null:
+		detail_drawer.open_card(c_name)
+
+
 func _on_hand_card_drag_started(hand_idx: int, c_name: String, global_pos: Vector2) -> void:
-	if _is_ui_modal_blocking() or is_mulligan_stage():
+	if _is_ui_modal_blocking() or is_mulligan_stage() or _is_gameplay_locked():
 		return
 	if not is_my_turn() or game_state.phase != "action" or not game_state.pending.is_empty():
+		if hand_strip != null:
+			hand_strip.trigger_card_shake(hand_idx)
+		if is_inside_tree() and AudioManager != null:
+			AudioManager.play_sfx("ui_error")
 		show_toast(explain_card_unplayable(c_name), TCGTheme.RED)
 		return
 	selected_hand_index = hand_idx
+	if input_controller != null:
+		input_controller.enter_card_selected(hand_idx)
 	drag_state = {
 		"hand_index": hand_idx,
 		"card_name": c_name,
@@ -1247,13 +1785,18 @@ func _finish_card_drag(local_pos: Vector2) -> void:
 			if bool(res.get("ok", false)):
 				if dice_tray != null:
 					dice_tray.trigger_tune(die_idx)
+				if vfx_pool != null and dice_tray != null:
+					vfx_pool.spawn_dice_spend_sparks(local_pos, dice_tray.get_die_global_center(die_idx) - global_position, me().get_active_char().get_defn().element)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("dice_tune")
 				show_toast("%s converted into a %s die" % [cname, me().get_active_char().get_defn().element], TCGTheme.GOLD_L)
 			return
 		begin_tune(hand_idx)
 		return
 
-	# 2. Dropped back onto the hand region (`y > 520`) -> cancel drag
-	if local_pos.y > 520.0:
+	# 2. Dropped back onto the hand region -> cancel drag cleanly using layout-aware Y threshold
+	var cancel_y: float = float(_lay.get("hand_drop_cancel_y", 820.0))
+	if local_pos.y > cancel_y:
 		selected_hand_index = -1
 		sync_from_state()
 		return
@@ -1269,16 +1812,63 @@ func _finish_card_drag(local_pos: Vector2) -> void:
 	select_or_play_hand_card(hand_idx, -1)
 
 
+func _is_choose_active_phase() -> bool:
+	if game_state == null or not is_my_turn():
+		return false
+	for a in legal_actions:
+		if a.player == view_player and a.type == "choose_active":
+			return true
+	return false
+
+
+func _on_detail_drawer_outside_click(pos: Vector2) -> bool:
+	if _is_ui_modal_blocking():
+		return false
+	for i in range(foe_char_slots.size()):
+		var fslot := foe_char_slots[i]
+		if fslot != null and fslot.visible and Rect2(fslot.position, fslot.size).has_point(pos):
+			_on_char_slot_clicked(1, i)
+			return true
+	for i in range(own_char_slots.size()):
+		var oslot := own_char_slots[i]
+		if oslot != null and oslot.visible and Rect2(oslot.position, oslot.size).has_point(pos):
+			_on_char_slot_clicked(0, i)
+			return true
+	return false
+
+
 func _on_char_slot_clicked(p_side: int, p_idx: int) -> void:
 	if _is_ui_modal_blocking():
 		return
 
 	# 1. If a hand card is currently selected for targeting, apply it to own character
 	if selected_hand_index >= 0 and game_state.phase == "action" and p_side == 0 and is_my_turn():
+		if _is_gameplay_locked():
+			return
 		select_or_play_hand_card(selected_hand_index, p_idx)
 		return
 
-	# 2. Click 1 = inspect details (for both own & opponent chars); Click 2 = act/switch (or close opponent inspect)
+	# 2. During active character selection (setup or forced switch), one left-click immediately selects
+	if p_side == 0 and _is_choose_active_phase():
+		_inspected.clear()
+		selected_hand_index = -1
+		_inspect_extra_open = false
+		if detail_drawer != null:
+			detail_drawer.close_immediate()
+		if _is_gameplay_locked():
+			sync_from_state()
+			return
+		for a in legal_actions:
+			if a.player == view_player and a.type == "choose_active" and a.index == p_idx:
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("ui_click")
+				execute_action(a)
+				return
+		show_toast("Cannot select that character as active", TCGTheme.RED)
+		sync_from_state()
+		return
+
+	# 3. Click 1 = inspect details (even while busy, T1.2/T8.4); Click 2 = act/switch (or close inspect)
 	var already_inspected: bool = (
 		String(_inspected.get("kind", "")) == "char"
 		and int(_inspected.get("side", -1)) == p_side
@@ -1288,26 +1878,28 @@ func _on_char_slot_clicked(p_side: int, p_idx: int) -> void:
 		selected_hand_index = -1
 		_inspect_extra_open = false
 		_inspected = {"kind": "char", "side": p_side, "index": p_idx}
+		if detail_drawer != null:
+			var p_idx_owner := view_player if p_side == 0 else (1 - view_player)
+			var own_p := game_state.players[p_idx_owner]
+			if p_idx >= 0 and p_idx < own_p.characters.size():
+				detail_drawer.open_character(own_p.characters[p_idx], own_p)
+		if is_inside_tree() and AudioManager != null:
+			AudioManager.play_sfx("ui_click")
 		sync_from_state()
 		return
 
 	_inspected.clear()
+	if detail_drawer != null:
+		detail_drawer.close_immediate()
 	if p_side != 0:
 		sync_from_state()
 		return
 
-	if not is_my_turn():
-		show_toast("Wait for your turn", TCGTheme.RED)
+	if _is_gameplay_locked():
 		sync_from_state()
 		return
-
-	# 3. Forced active character choice (`pending`) or Setup active character selection
-	if not game_state.pending.is_empty() or (game_state.phase == "setup" and me().mull_done):
-		for a in legal_actions:
-			if a.player == view_player and a.type == "choose_active" and a.index == p_idx:
-				execute_action(a)
-				return
-		show_toast("Cannot select that character as active", TCGTheme.RED)
+	if not is_my_turn():
+		show_toast("Wait for your turn", TCGTheme.RED)
 		sync_from_state()
 		return
 
@@ -1338,7 +1930,7 @@ func _on_skill_clicked(skill_idx: int) -> void:
 	if _is_ui_modal_blocking():
 		return
 
-	# Click 1 = inspect skill details & select; Click 2 on same skill = automatically try to use
+	# Click 1 = inspect skill details & select (allowed even while busy); Click 2 = use
 	var already_inspected: bool = (
 		String(_inspected.get("kind", "")) == "skill"
 		and int(_inspected.get("index", -1)) == skill_idx
@@ -1347,10 +1939,15 @@ func _on_skill_clicked(skill_idx: int) -> void:
 		selected_hand_index = -1
 		_inspect_extra_open = false
 		_inspected = {"kind": "skill", "index": skill_idx}
+		if is_inside_tree() and AudioManager != null:
+			AudioManager.play_sfx("ui_click")
 		sync_from_state()
 		return
 
 	_inspected.clear()
+	if _is_gameplay_locked():
+		sync_from_state()
+		return
 	if not is_my_turn() or game_state.phase != "action" or not game_state.pending.is_empty():
 		show_toast("Skills can only be used on your turn during the Action Phase", TCGTheme.RED)
 		sync_from_state()
@@ -1371,6 +1968,8 @@ func _on_skill_clicked(skill_idx: int) -> void:
 			begin_payment(a, sk.cost, sk.name, sk.desc)
 			return
 
+	if is_inside_tree() and AudioManager != null:
+		AudioManager.play_sfx("ui_error")
 	if sk.cost.energy > 0 and ch.energy < sk.cost.energy:
 		show_toast("Not enough Energy for %s (%d/%d)" % [sk.name, ch.energy, sk.cost.energy], TCGTheme.RED)
 	else:
@@ -1379,13 +1978,15 @@ func _on_skill_clicked(skill_idx: int) -> void:
 
 
 func _on_tray_die_clicked(die_idx: int) -> void:
-	if _is_ui_modal_blocking():
+	if _is_ui_modal_blocking() or _is_gameplay_locked():
 		return
 	if is_my_turn() and game_state.phase == "roll":
 		if roll_selected_dice.has(die_idx):
 			roll_selected_dice.erase(die_idx)
 		else:
 			roll_selected_dice.append(die_idx)
+		if is_inside_tree() and AudioManager != null:
+			AudioManager.play_sfx("ui_click")
 		sync_from_state()
 	elif is_my_turn() and game_state.phase == "action" and selected_hand_index >= 0:
 		# If a card is selected and player clicks a die on the tray, convert that die via Elemental Tuning
@@ -1396,53 +1997,91 @@ func _on_tray_die_clicked(die_idx: int) -> void:
 			if bool(res.get("ok", false)):
 				if dice_tray != null:
 					dice_tray.trigger_tune(die_idx)
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("dice_tune")
 				show_toast("%s converted into a %s die" % [cname, me().get_active_char().get_defn().element], TCGTheme.GOLD_L)
 		else:
 			show_toast("Matching and Omni dice cannot be converted", TCGTheme.RED)
 
 
+func _ensure_lay() -> Dictionary:
+	if _lay.is_empty():
+		_compute_board_layout()
+	return _lay
+
+
 func _end_phase_rect() -> Rect2:
-	return Rect2(32, 344, 84, 84)
+	return _ensure_lay()["end_round_rect"]
 
 
 func _pause_btn_rect() -> Rect2:
-	return Rect2(1218, 12, 48, 48)
+	return _ensure_lay()["pause_btn_rect"]
+
+
+func _skip_btn_rect() -> Rect2:
+	return _ensure_lay()["skip_btn_rect"]
 
 
 func _pause_option_rect(idx: int) -> Rect2:
-	return Rect2(490, 260 + idx * 58, 300, 44)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var cx: float = safe.get_center().x
+	var cy: float = safe.get_center().y
+	return Rect2(cx - 170.0, cy - 72.0 + float(idx) * 66.0, 340.0, 52.0)
 
 
 func _game_over_rect(idx: int) -> Rect2:
-	return Rect2(420 + idx * 230, 412, 210, 46)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var cx: float = safe.get_center().x
+	var cy: float = safe.get_center().y
+	return Rect2(cx - 250.0 + float(idx) * 260.0, cy + 56.0, 240.0, 56.0)
 
 
 func _mulligan_confirm_rect() -> Rect2:
-	return Rect2(530, 500, 220, 46)
+	return _ensure_lay()["mulligan_confirm_rect"]
 
 
 func _roll_confirm_rect() -> Rect2:
-	return Rect2(1040, 514, 152, 36)
+	return _ensure_lay()["roll_confirm_rect"]
+
+
+func _payment_panel_rects() -> Array[Rect2]:
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var total_w: float = minf(1160.0, safe.size.x - 64.0)
+	var h: float = minf(540.0, safe.size.y - 140.0)
+	var x0: float = safe.get_center().x - total_w * 0.5
+	var y0: float = safe.get_center().y - h * 0.5
+	var lw: float = clampf(total_w * 0.39, 360.0, 450.0)
+	var gap: float = 30.0
+	var rw: float = total_w - lw - gap
+	return [
+		Rect2(x0, y0, lw, h),
+		Rect2(x0 + lw + gap, y0, rw, h),
+	]
 
 
 func _pay_die_rect(idx: int) -> Rect2:
+	var right: Rect2 = _payment_panel_rects()[1]
 	var col: int = idx % 2
 	var row: int = idx / 2
-	var cx: float = 890.0 + float(col) * 218.0
-	var cy: float = 248.0 + float(row) * 70.0
-	return Rect2(cx - 50.0, cy - 32.0, 100.0, 64.0)
+	var col_w: float = (right.size.x - 52.0) * 0.5
+	var cx: float = right.position.x + 26.0 + col_w * (0.5 + float(col))
+	var cy: float = right.position.y + 126.0 + float(row) * 80.0
+	return Rect2(cx - 60.0, cy - 35.0, 120.0, 70.0)
 
 
 func _pay_cancel_rect() -> Rect2:
-	return Rect2(786, 536, 210, 48)
+	var right: Rect2 = _payment_panel_rects()[1]
+	return Rect2(right.position.x + 28.0, right.end.y - 74.0, (right.size.x - 76.0) * 0.5, 54.0)
 
 
 func _pay_confirm_rect() -> Rect2:
-	return Rect2(1018, 536, 210, 48)
+	var right: Rect2 = _payment_panel_rects()[1]
+	var bw: float = (right.size.x - 76.0) * 0.5
+	return Rect2(right.position.x + 48.0 + bw, right.end.y - 74.0, bw, 54.0)
 
 
 func _card_detail_btn_rect() -> Rect2:
-	return Rect2(34, 464, 182, 28)
+	return _ensure_lay()["card_detail_btn_rect"]
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -1473,7 +2112,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 	match kev.keycode:
 		KEY_ESCAPE:
-			if not drag_state.is_empty():
+			if detail_drawer != null and detail_drawer.is_open():
+				detail_drawer.pop_or_close()
+			elif settings_modal != null and settings_modal.visible:
+				settings_modal.close()
+			elif not drag_state.is_empty():
 				drag_state.clear()
 				sync_from_state()
 			elif not pay_pending.is_empty():
@@ -1483,11 +2126,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				_inspected.clear()
 				_inspect_extra_open = false
 				sync_from_state()
+			elif settings_modal != null and is_inside_tree():
+				settings_modal.open()
 			else:
 				_pause_open = not _pause_open
 				queue_redraw()
 		KEY_ENTER, KEY_KP_ENTER:
-			if _pause_open:
+			if _pause_open or (settings_modal != null and settings_modal.visible):
 				return
 			if not pay_pending.is_empty():
 				confirm_payment_modal()
@@ -1495,6 +2140,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				_confirm_mulligan()
 			elif is_my_turn() and game_state != null and game_state.phase == "roll":
 				_confirm_roll_phase()
+		KEY_SPACE:
+			if animation_queue != null and animation_queue.is_busy():
+				skip_animations()
 		KEY_E:
 			if not _pause_open and is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty() and pay_pending.is_empty():
 				execute_action(TCGGameState.ActionData.new("end_round", view_player))
@@ -1508,8 +2156,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				sync_from_state()
 		KEY_F:
 			if not _pause_open:
-				game_speed = 2.0 if is_equal_approx(game_speed, 1.0) else 1.0
-				show_toast("Game speed x%d" % int(game_speed), TCGTheme.GOLD)
+				var next_sp := 1.5 if is_equal_approx(game_speed, 1.0) else (2.0 if is_equal_approx(game_speed, 1.5) else 1.0)
+				set_animation_speed(next_sp)
 		KEY_1, KEY_2, KEY_3:
 			if not _pause_open and is_my_turn() and game_state.phase == "action" and pay_pending.is_empty():
 				var s_idx: int = int(kev.keycode) - int(KEY_1)
@@ -1571,12 +2219,15 @@ func _input(event: InputEvent) -> void:
 		if m_ev == null:
 			return
 		var pos: Vector2 = m_ev.position
+		_hover_mouse_pos = pos
 		var prev_ab := _action_btn_hovered
 		var prev_pi := _pause_hover_idx
 		var prev_oi := _over_hover_idx
 		var prev_pa := _pause_hovered
+		var prev_sk := _skip_hovered
 		var prev_ib := _inspect_btn_hovered
 		_pause_hovered = _pause_btn_rect().has_point(pos)
+		_skip_hovered = (animation_queue != null and animation_queue.is_busy() and _skip_btn_rect().has_point(pos))
 		_inspect_btn_hovered = (
 			selected_hand_index >= 0
 			and pay_pending.is_empty()
@@ -1615,7 +2266,7 @@ func _input(event: InputEvent) -> void:
 					break
 			if prev_pb != _pay_btn_hovered or prev_pd != _pay_die_hovered:
 				queue_redraw()
-		if prev_ab != _action_btn_hovered or prev_pi != _pause_hover_idx or prev_oi != _over_hover_idx or prev_pa != _pause_hovered or prev_ib != _inspect_btn_hovered:
+		if prev_ab != _action_btn_hovered or prev_pi != _pause_hover_idx or prev_oi != _over_hover_idx or prev_pa != _pause_hovered or prev_sk != _skip_hovered or prev_ib != _inspect_btn_hovered:
 			queue_redraw()
 		return
 
@@ -1625,6 +2276,9 @@ func _input(event: InputEvent) -> void:
 			return
 		var pos: Vector2 = b_ev.position
 		var vp := get_viewport()
+
+		if settings_modal != null and settings_modal.visible:
+			return
 
 		if _pause_open:
 			if _pause_option_rect(0).has_point(pos):
@@ -1648,9 +2302,18 @@ func _input(event: InputEvent) -> void:
 				vp.set_input_as_handled()
 			return
 
+		if animation_queue != null and animation_queue.is_busy() and _skip_btn_rect().has_point(pos):
+			skip_animations()
+			if vp != null:
+				vp.set_input_as_handled()
+			return
+
 		if _pause_btn_rect().has_point(pos):
-			_pause_open = true
-			queue_redraw()
+			if settings_modal != null and is_inside_tree():
+				settings_modal.open()
+			else:
+				_pause_open = true
+				queue_redraw()
 			if vp != null:
 				vp.set_input_as_handled()
 			return
@@ -1696,6 +2359,11 @@ func _input(event: InputEvent) -> void:
 
 		if selected_hand_index >= 0 and pay_pending.is_empty() and _card_detail_btn_rect().has_point(pos):
 			_inspect_extra_open = not _inspect_extra_open
+			if detail_drawer != null and is_inside_tree():
+				if _inspect_extra_open and selected_hand_index < me().hand.size():
+					detail_drawer.open_card(me().hand[selected_hand_index])
+				else:
+					detail_drawer.close()
 			queue_redraw()
 			if vp != null:
 				vp.set_input_as_handled()
@@ -1907,8 +2575,20 @@ func _on_zone_unit_clicked(p_side: int, is_summon: bool, slot_idx: int, u: TCGPl
 	_inspect_extra_open = false
 	if same:
 		_inspected.clear()
+		if detail_drawer != null and detail_drawer.is_open():
+			detail_drawer.close()
 	else:
 		_inspected = {"kind": "zone", "side": p_side, "is_summon": is_summon, "slot": slot_idx, "unit": u}
+		if detail_drawer != null and is_inside_tree():
+			if is_summon:
+				var sdef := CardDataSystem.get_summon_def(u.name)
+				var sdesc := "End Phase: Deal %d %s DMG to opposing active character." % [
+					sdef.damage if sdef != null else 1,
+					sdef.element if sdef != null else "Physical"
+				]
+				detail_drawer.open_status(u.name, sdesc, u.usages, "SUMMON")
+			else:
+				detail_drawer.open_card(u.name)
 	sync_from_state()
 
 
@@ -1923,8 +2603,32 @@ func _on_status_icon_clicked(payload: Dictionary) -> void:
 	_inspect_extra_open = false
 	if same:
 		_inspected.clear()
+		if detail_drawer != null and detail_drawer.is_open():
+			detail_drawer.close()
 	else:
 		_inspected = {"kind": "status", "payload": payload}
+		if detail_drawer != null:
+			var pkind := String(payload.get("kind", ""))
+			if pkind == "aura":
+				detail_drawer.open_keyword("el:" + String(payload.get("aura", "")))
+			elif pkind == "equip":
+				detail_drawer.open_card(String(payload.get("card_name", "")))
+			elif pkind == "char":
+				var c_side := int(payload.get("side", -1))
+				var c_idx := int(payload.get("index", -1))
+				var p_idx_owner := view_player if c_side == 0 else (1 - view_player)
+				if p_idx_owner >= 0 and p_idx_owner < game_state.players.size():
+					var own_p := game_state.players[p_idx_owner]
+					if c_idx >= 0 and c_idx < own_p.characters.size():
+						_inspected = {"kind": "char", "side": c_side, "index": c_idx}
+						detail_drawer.open_character(own_p.characters[c_idx], own_p)
+			else:
+				var st_name := String(payload.get("name", ""))
+				var st_inst: TCGPlayerSystem.StatusInstance = payload.get("status")
+				var sdef := CardDataSystem.get_status_def(st_name)
+				var st_txt: String = sdef.text if (sdef != null and not sdef.text.is_empty()) else ""
+				var cnt := (st_inst.shield if st_inst.shield > 0 else st_inst.usages) if st_inst != null else int(payload.get("count", -1))
+				detail_drawer.open_status(st_name, st_txt, cnt, pkind.capitalize())
 	sync_from_state()
 
 
@@ -1954,13 +2658,20 @@ func _refresh_visuals() -> void:
 
 
 func _draw() -> void:
-	var w: float = maxf(size.x, float(TCGTheme.W))
-	var h: float = maxf(size.y, float(TCGTheme.H))
+	var vp := _vp_size()
+	var w: float = vp.x
+	var h: float = vp.y
+	var l := _ensure_lay()
+	var safe: Rect2 = l["safe"]
 
-	# 1. Dueling Mat Background
-	TCGArt.draw_mat(self, Vector2(w, h))
+	var shake_off := vfx_pool.shake_offset if vfx_pool != null else Vector2.ZERO
+	draw_set_transform(shake_off, 0.0, Vector2.ONE)
+
+	# 1. Dueling Mat Background w/ ambient shimmer (T2.2)
+	TCGArt.draw_mat(self, Vector2(w, h), _clock)
 
 	if game_state == null:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		return
 
 	var p_own: TCGPlayerSystem.PlayerState = game_state.players[view_player]
@@ -1973,7 +2684,7 @@ func _draw() -> void:
 			if a.target == -1:
 				TCGTheme.draw_rounded_box(
 					self,
-					Rect2(180, 66, w - 360, h - 132),
+					Rect2(safe.position.x + 190.0, safe.position.y + 64.0, safe.size.x - 310.0, safe.size.y - 280.0),
 					Color(0, 0, 0, 0),
 					TCGTheme.GOLD_L,
 					14,
@@ -1982,8 +2693,8 @@ func _draw() -> void:
 				break
 
 	# 2. Deck Card-Back Piles (left side) + Card Counts
-	_draw_deck_pile(Rect2(38, 92, 58, 78), p_foe.deck.size(), "FOE DECK")
-	_draw_deck_pile(Rect2(38, 488, 58, 78), p_own.deck.size(), "DECK")
+	_draw_deck_pile(l["foe_deck_rect"], p_foe.deck.size(), "FOE DECK")
+	_draw_deck_pile(l["own_deck_rect"], p_own.deck.size(), "DECK")
 
 	# 3. Opponent Hand Fan (top-right of center banner)
 	_draw_opponent_hand_fan(p_foe.hand)
@@ -1991,16 +2702,15 @@ func _draw() -> void:
 	# 4. Top-Center Round / Phase / Turn Indicator Banner
 	_draw_top_phase_banner()
 
-	# 5. Combat Status Ribbons below/above character rows
-	_draw_combat_status_ribbon(1, Vector2(640, FOE_Y + CH + 14.0), p_foe.combat)
-	_draw_combat_status_ribbon(0, Vector2(640, OWN_Y - 14.0), p_own.combat)
-
-	# 6. Left-Side "END ROUND" Hourglass Medallion Button
+	# 5. Left-Side "END ROUND" Hourglass Medallion Button + Turn Timer Ring (T7.2 / T11.5)
 	_draw_end_phase_button()
 
-	# 7. Top-Right Pause Gear Button
+	# 6. Top-Right Skip Pill (when animating) + Settings Gear Button
+	if animation_queue != null and animation_queue.is_busy():
+		_draw_skip_button()
 	_draw_pause_button()
 
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if _overlay_canvas != null:
 		_overlay_canvas.queue_redraw()
 
@@ -2009,31 +2719,32 @@ func _draw_top_overlays() -> void:
 	if game_state == null or _overlay_canvas == null:
 		return
 	var c: CanvasItem = _overlay_canvas
-	var w: float = maxf(size.x, float(TCGTheme.W))
-	var h: float = maxf(size.y, float(TCGTheme.H))
+	var vp := _vp_size()
+	var w: float = vp.x
+	var h: float = vp.y
 
 	# Burst flash radial vignette + expanding shockwave ring
 	if _burst_flash_alpha > 0.001:
 		var b_norm: float = clampf(_burst_flash_alpha / 0.65, 0.0, 1.0)
 		c.draw_rect(Rect2(0, 0, w, h), Color(1.0, 0.95, 0.72, b_norm * 0.30))
-		var ring_r: float = (1.0 - b_norm) * 440.0 + 60.0
+		var ring_r: float = (1.0 - b_norm) * 520.0 + 70.0
 		c.draw_arc(Vector2(w * 0.5, h * 0.5), ring_r, 0.0, TAU, 48, Color(1.0, 0.88, 0.48, b_norm * 0.65), 4.0)
 
 	# 8. Phase-Specific Prompts (Setup Mulligan, Choose Active Character, Roll Phase)
 	_draw_phase_prompts(c, w, h)
 
-	# 9. Flying Card Animations & Damage/Reaction Floaters
+	# 9. Flying Card Animations, Center Preview, Targeting Arrow & Damage/Reaction Floaters
 	_draw_fx_layer(c)
 
 	# 10. Dragged Card Follower
 	if not drag_state.is_empty():
 		_draw_dragged_card(c)
 
-	# 11. Hover Inspector Panel (Cards, Characters, Skills, Summons, Supports, Statuses)
+	# 11. Click-Driven Card/Skill Preview (Details drawer handles Char/Zone/Status when open)
 	if pay_pending.is_empty() and drag_state.is_empty() and not _pause_open and _hotseat_cover < 0 and not intro_active() and game_state.phase != "over":
 		_draw_inspect_tooltip(c)
 
-	# 12. Action Payment / Elemental Tuning Modal (`draw_payment_select` port)
+	# 12. Action Payment / Elemental Tuning Modal
 	if not pay_pending.is_empty():
 		_draw_payment_modal(c, w, h)
 
@@ -2048,7 +2759,7 @@ func _draw_top_overlays() -> void:
 	# 15. Toast Notification Stack (top-center)
 	_draw_toasts(c, w)
 
-	# 16. Match Over Overlay (`draw_over` port)
+	# 16. Match Over Overlay
 	if game_state.phase == "over":
 		_draw_game_over_overlay(c, w, h)
 
@@ -2062,23 +2773,25 @@ func _draw_deck_pile(r: Rect2, count: int, label: String) -> void:
 		TCGArt.draw_card_back(self, Rect2(r.position.x + 3, r.position.y + 3, r.size.x, r.size.y))
 	TCGArt.draw_card_back(self, r)
 	var badge_c := Vector2(r.end.x - 4, r.end.y - 6)
-	draw_circle(badge_c, 12.0, TCGTheme.PANEL2)
-	draw_arc(badge_c, 12.0, 0.0, TAU, 18, TCGTheme.GOLD_L, 2.0)
-	TCGTheme.draw_text_centered(self, str(count), badge_c, 12, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(self, label, Vector2(r.get_center().x, r.end.y + 11.0), 9, TCGTheme.DIM, true, true)
+	draw_circle(badge_c, 16.0, TCGTheme.PANEL2)
+	draw_arc(badge_c, 16.0, 0.0, TAU, 20, TCGTheme.GOLD_L, 2.0)
+	TCGTheme.draw_text_centered(self, str(count), badge_c, 15, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(self, label, Vector2(r.get_center().x, r.end.y + 15.0), 13, TCGTheme.DIM, true, true)
 
 
 func _draw_opponent_hand_fan(foe_hand: Array[String]) -> void:
 	var n_cards: int = foe_hand.size()
 	if n_cards <= 0:
 		return
-	var cw: float = 44.0
-	var ch: float = 62.0
-	var step: float = minf(28.0, 140.0 / float(maxi(1, n_cards)))
+	var l := _ensure_lay()
+	var safe: Rect2 = l["safe"]
+	var cw: float = 52.0
+	var ch: float = 74.0
+	var step: float = minf(34.0, 190.0 / float(maxi(1, n_cards)))
 	var total_w: float = cw + step * float(n_cards - 1)
-	var x0: float = 890.0 - total_w * 0.5
+	var x0: float = float(l["foe_hand_cx"]) - total_w * 0.5
 	for i in range(n_cards):
-		var r := Rect2(x0 + float(i) * step, 4.0, cw, ch)
+		var r := Rect2(x0 + float(i) * step, safe.position.y + 4.0, cw, ch)
 		if reveal_opponent_hand:
 			TCGActionCardView.draw_card_surface(self, r, foe_hand[i], false, false, true, false, false, false)
 		else:
@@ -2086,12 +2799,12 @@ func _draw_opponent_hand_fan(foe_hand: Array[String]) -> void:
 
 
 func _draw_top_phase_banner() -> void:
-	var banner := Rect2(470, 10, 320, 44)
-	TCGTheme.draw_gold_frame(self, banner, Color(0.07, 0.12, 0.19, 0.92), 12, false)
+	var banner: Rect2 = _ensure_lay()["top_banner"]
+	TCGTheme.draw_gold_frame(self, banner, Color(0.07, 0.12, 0.19, 0.94), 12, false)
 
 	var phase_str: String = "MATCH OVER" if game_state.phase == "over" else (game_state.phase.to_upper() + " PHASE")
 	var round_txt := "ROUND %d  ·  %s" % [game_state.round_number, phase_str]
-	TCGTheme.draw_text_centered(self, round_txt, Vector2(banner.get_center().x, banner.position.y + 14.0), 14, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(self, round_txt, Vector2(banner.get_center().x, banner.position.y + 18.0), 19, TCGTheme.GOLD_L, true, true)
 
 	var act_idx: int = maxi(0, actor())
 	var act_p: TCGPlayerSystem.PlayerState = game_state.players[act_idx]
@@ -2099,55 +2812,81 @@ func _draw_top_phase_banner() -> void:
 	var ch_name := act_ch.name if act_ch != null else "Choosing…"
 	var turn_col := TCGTheme.GREEN if act_idx == view_player else TCGTheme.GOLD
 	var sub_txt := "Active Turn: %s (%s)" % [player_labels[act_idx], ch_name]
-	TCGTheme.draw_text_centered(self, sub_txt, Vector2(banner.get_center().x, banner.position.y + 32.0), 11, turn_col, true, true)
+	TCGTheme.draw_text_centered(self, sub_txt, Vector2(banner.get_center().x, banner.position.y + 40.0), 14, turn_col, true, true)
 
 
 func _draw_combat_status_ribbon(_side: int, center: Vector2, statuses: Array) -> void:
 	if statuses.is_empty():
 		return
-	var total_w: float = float(statuses.size()) * 116.0
+	var total_w: float = float(statuses.size()) * 142.0
 	var x0: float = center.x - total_w * 0.5
 	for i in range(statuses.size()):
 		var st: TCGPlayerSystem.StatusInstance = statuses[i]
-		var pill := Rect2(x0 + float(i) * 116.0, center.y - 10.0, 110.0, 20.0)
-		TCGTheme.draw_rounded_box(self, pill, Color(0.1, 0.16, 0.24, 0.9), TCGTheme.GOLD, 10, 1)
+		var pill := Rect2(x0 + float(i) * 142.0, center.y - 13.0, 134.0, 26.0)
+		TCGTheme.draw_rounded_box(self, pill, Color(0.1, 0.16, 0.24, 0.9), TCGTheme.GOLD, 12, 1)
 		var count_val: int = st.shield if st.shield > 0 else maxi(0, st.usages)
 		var txt := "%s (%d)" % [st.name, count_val]
 		if txt.length() > 16:
 			txt = st.name.substr(0, 11) + "…(" + str(count_val) + ")"
-		TCGTheme.draw_text_centered(self, txt, pill.get_center(), 10, TCGTheme.GOLD_L, true, true)
+		TCGTheme.draw_text_centered(self, txt, pill.get_center(), 13, TCGTheme.GOLD_L, true, true)
 
 
 func _draw_end_phase_button() -> void:
 	var r := _end_phase_rect()
 	var c := r.get_center()
+	var p_own := game_state.players[view_player]
+	var p_foe := game_state.players[1 - view_player]
 	var can_act: bool = (is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty())
 	var rad: float = r.size.x * 0.5
+	var pulse := 0.5 + 0.5 * sin(_clock * 4.5)
+
+	# T2.4 "FIRST NEXT ROUND" slide-out tag above End Round when player declared first
+	if p_own.ended and not p_foe.ended:
+		var tag_r := Rect2(r.position.x - 4.0, r.position.y - 30.0, r.size.x + 44.0, 24.0)
+		TCGTheme.draw_rounded_box(self, tag_r, Color("#183652"), TCGTheme.TEAL, 12, 1.5)
+		TCGTheme.draw_text_centered(self, "1ST NEXT ROUND", tag_r.get_center(), 12, TCGTheme.GOLD_L, true, false)
+
 	var fill := Color8(36, 58, 82) if can_act else Color8(24, 32, 44)
 	if _end_phase_hovered and can_act:
 		fill = Color8(52, 82, 112)
 	var border := TCGTheme.GOLD_L if (_end_phase_hovered or can_act) else TCGTheme.GOLD_D
 
+	if can_act:
+		draw_arc(c, rad + 5.0 + pulse * 2.5, 0.0, TAU, 36, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.25 + 0.25 * pulse), 2.5)
+
 	draw_circle(c + Vector2(0, 3), rad, Color(0, 0, 0, 0.45))
 	draw_circle(c, rad, fill)
-	draw_arc(c, rad, 0.0, TAU, 32, border, 3.0)
-	draw_arc(c, rad - 5.0, 0.0, TAU, 28, TCGTheme.GOLD_D, 1.0)
+	draw_arc(c, rad, 0.0, TAU, 36, border, 3.0)
+	draw_arc(c, rad - 5.0, 0.0, TAU, 30, TCGTheme.GOLD_D, 1.0)
+
+	# T11.5 Circular Turn Timer Ring around End Round medallion
+	if is_my_turn() and game_state.phase in ["action", "roll"]:
+		var frac := clampf(_turn_timer / 45.0, 0.0, 1.0)
+		var ring_col := TCGTheme.TEAL if _turn_timer > 15.0 else (TCGTheme.GOLD_L if _turn_timer > 6.0 else TCGTheme.RED)
+		draw_arc(c, rad + 2.0, -PI * 0.5, -PI * 0.5 + TAU * frac, 40, ring_col, 3.0)
 
 	var hg_pts_top := PackedVector2Array([
-		Vector2(c.x - 10, c.y - 22),
-		Vector2(c.x + 10, c.y - 22),
-		Vector2(c.x, c.y - 10),
+		Vector2(c.x - 12, c.y - 26),
+		Vector2(c.x + 12, c.y - 26),
+		Vector2(c.x, c.y - 12),
 	])
 	var hg_pts_bot := PackedVector2Array([
-		Vector2(c.x, c.y - 10),
-		Vector2(c.x + 10, c.y + 2),
-		Vector2(c.x - 10, c.y + 2),
+		Vector2(c.x, c.y - 12),
+		Vector2(c.x + 12, c.y + 2),
+		Vector2(c.x - 12, c.y + 2),
 	])
 	draw_colored_polygon(hg_pts_top, TCGTheme.GOLD_L if can_act else TCGTheme.DIM)
 	draw_colored_polygon(hg_pts_bot, TCGTheme.GOLD if can_act else TCGTheme.DIM)
 
-	TCGTheme.draw_text_centered(self, "END", Vector2(c.x, c.y + 13.0), 12, TCGTheme.GOLD_L if can_act else TCGTheme.DIM, true, true)
-	TCGTheme.draw_text_centered(self, "ROUND", Vector2(c.x, c.y + 26.0), 10, TCGTheme.TEXT if can_act else TCGTheme.DIM, true, true)
+	TCGTheme.draw_text_centered(self, "END", Vector2(c.x, c.y + 15.0), 15, TCGTheme.GOLD_L if can_act else TCGTheme.DIM, true, true)
+	TCGTheme.draw_text_centered(self, "ROUND", Vector2(c.x, c.y + 32.0), 13, TCGTheme.TEXT if can_act else TCGTheme.DIM, true, true)
+
+
+func _draw_skip_button() -> void:
+	var r := _skip_btn_rect()
+	var border := TCGTheme.GOLD_L if _skip_hovered else TCGTheme.GOLD
+	TCGTheme.draw_rounded_box(self, r, Color(0.09, 0.14, 0.22, 0.92), border, 10, 1.5)
+	TCGTheme.draw_text_centered(self, "SKIP ⏭", r.get_center(), 14, TCGTheme.GOLD_L, true, true)
 
 
 func _draw_pause_button() -> void:
@@ -2155,25 +2894,29 @@ func _draw_pause_button() -> void:
 	var border := TCGTheme.GOLD_L if _pause_hovered else TCGTheme.GOLD
 	TCGTheme.draw_rounded_box(self, r, TCGTheme.PANEL2, border, 12, 2, Vector2(0, 2), 80)
 	var c := r.get_center()
-	draw_arc(c, 10.0, 0.0, TAU, 16, border, 2.0)
-	draw_circle(c, 4.0, border)
+	draw_arc(c, 10.5, 0.0, TAU, 16, border, 2.2)
+	draw_circle(c, 4.2, border)
 	for k in range(8):
 		var a: float = float(k) * PI / 4.0
-		var p1 := Vector2(c.x + cos(a) * 10.0, c.y + sin(a) * 10.0)
-		var p2 := Vector2(c.x + cos(a) * 14.0, c.y + sin(a) * 14.0)
-		draw_line(p1, p2, border, 2.0)
+		var p1 := Vector2(c.x + cos(a) * 10.5, c.y + sin(a) * 10.5)
+		var p2 := Vector2(c.x + cos(a) * 15.0, c.y + sin(a) * 15.0)
+		draw_line(p1, p2, border, 2.2)
 
 
-func _draw_phase_prompts(c: CanvasItem, w: float, _h: float) -> void:
+func _draw_phase_prompts(c: CanvasItem, _w: float, _h: float) -> void:
 	if intro_active():
 		return
+	var l := _ensure_lay()
+	var safe: Rect2 = l["safe"]
+	var cx: float = float(l["cx"])
 	var p := me()
-	# 1. Mulligan overlay banner & confirm button (`ui/match.py:661-670`)
+
+	# 1. Mulligan overlay banner & confirm button
 	if is_mulligan_stage():
-		var header_box := Rect2(w * 0.5 - 230.0, 140.0, 460.0, 74.0)
-		TCGTheme.draw_gold_frame(c, header_box, Color(0.05, 0.09, 0.15, 0.94), 12, true)
-		TCGTheme.draw_text_centered(c, "STARTING HAND MULLIGAN", Vector2(w * 0.5, 164.0), 20, TCGTheme.GOLD_L, true, true)
-		TCGTheme.draw_text_centered(c, "Click cards to mark SWAP, then confirm", Vector2(w * 0.5, 192.0), 13, TCGTheme.DIM, false, true)
+		var header_box := Rect2(cx - 280.0, safe.position.y + 146.0, 560.0, 88.0)
+		TCGTheme.draw_gold_frame(c, header_box, Color(0.05, 0.09, 0.15, 0.95), 12, true)
+		TCGTheme.draw_text_centered(c, "STARTING HAND MULLIGAN", Vector2(cx, header_box.position.y + 28.0), 25, TCGTheme.GOLD_L, true, true)
+		TCGTheme.draw_text_centered(c, "Click cards to mark SWAP, then confirm", Vector2(cx, header_box.position.y + 62.0), 16, TCGTheme.DIM, false, true)
 		var n_sel: int = mulligan_swap_indices.size()
 		TCGTheme.draw_plaque(
 			c,
@@ -2184,30 +2927,32 @@ func _draw_phase_prompts(c: CanvasItem, w: float, _h: float) -> void:
 		)
 		return
 
-	# 2. Choose Active Character ribbon (`ui/match.py:934-945`)
+	# 2. Choose Active Character ribbon
+	var center_band_y: float = safe.position.y + 414.0
 	if not game_state.pending.is_empty() or (game_state.phase == "setup" and p.mull_done and is_my_turn()):
-		var band := Rect2(320, 326, 640, 44)
-		TCGTheme.draw_gold_frame(c, band, Color(0.18, 0.13, 0.10, 0.92), 10, true)
+		var band := Rect2(cx - 390.0, center_band_y, 780.0, 50.0)
+		TCGTheme.draw_gold_frame(c, band, Color(0.18, 0.13, 0.10, 0.94), 12, true)
 		var msg := "Choose your active character (click one of your characters)" if is_my_turn() else ("%s is choosing an active character…" % _who(actor()))
-		TCGTheme.draw_text_centered(c, msg, band.get_center(), 16, TCGTheme.GOLD_L, true, true)
+		TCGTheme.draw_text_centered(c, msg, band.get_center(), 20, TCGTheme.GOLD_L, true, true)
 		return
 
 	if game_state.phase == "setup" and not is_my_turn() and actor() >= 0:
-		var band := Rect2(360, 328, 560, 40)
-		TCGTheme.draw_rounded_box(c, band, Color(0.08, 0.13, 0.20, 0.88), TCGTheme.GOLD_D, 10, 1)
-		TCGTheme.draw_text_centered(c, "%s is preparing opening setup…" % _who(actor()), band.get_center(), 14, TCGTheme.GOLD_L, true, true)
+		var band := Rect2(cx - 320.0, center_band_y, 640.0, 46.0)
+		TCGTheme.draw_rounded_box(c, band, Color(0.08, 0.13, 0.20, 0.90), TCGTheme.GOLD_D, 10, 1)
+		TCGTheme.draw_text_centered(c, "%s is preparing opening setup…" % _who(actor()), band.get_center(), 17, TCGTheme.GOLD_L, true, true)
 		return
 
-	# 3. Roll Phase reroll prompt (`ui/match.py:966-969`)
+	# 3. Roll Phase reroll prompt
 	if is_my_turn() and game_state.phase == "roll":
 		var n_reroll: int = roll_selected_dice.size()
 		var lbl := "Confirm Roll" if (n_reroll == 0 or p.rerolls <= 0) else ("Reroll %d + Go" % n_reroll)
-		TCGTheme.draw_plaque(c, _roll_confirm_rect(), lbl, TCGTheme.GREEN, _action_btn_hovered, false, true)
+		var rcr := _roll_confirm_rect()
+		TCGTheme.draw_plaque(c, rcr, lbl, TCGTheme.GREEN, _action_btn_hovered, false, true)
 		TCGTheme.draw_text_centered(
 			c,
-			"Rerolls left: %d (click dice on right tray)" % p.rerolls,
-			Vector2(_roll_confirm_rect().get_center().x, _roll_confirm_rect().end.y + 14.0),
-			11,
+			"Rerolls left: %d (click dice)" % p.rerolls,
+			Vector2(rcr.get_center().x, rcr.end.y + 16.0),
+			14,
 			TCGTheme.GOLD_L,
 			true,
 			true
@@ -2216,13 +2961,13 @@ func _draw_phase_prompts(c: CanvasItem, w: float, _h: float) -> void:
 	# 4. Selected hand card target instruction banner
 	if selected_hand_index >= 0 and selected_hand_index < p.hand.size() and pay_pending.is_empty() and drag_state.is_empty():
 		var cname: String = p.hand[selected_hand_index]
-		var band := Rect2(360, 328, 560, 38)
+		var band := Rect2(cx - 340.0, center_band_y, 680.0, 44.0)
 		TCGTheme.draw_rounded_box(c, band, Color(0.08, 0.14, 0.22, 0.92), TCGTheme.GOLD_L, 10, 2)
 		TCGTheme.draw_text_centered(
 			c,
 			"Playing %s — click a highlighted target, [T] to Tune, or [Esc]/Right-Click to cancel" % cname,
 			band.get_center(),
-			12,
+			15,
 			TCGTheme.GOLD_L,
 			true,
 			true
@@ -2237,7 +2982,59 @@ func _draw_dragged_card(c: CanvasItem) -> void:
 	TCGActionCardView.draw_card_surface(c, r, c_name, true, true, true, false, false, false)
 
 
+func _draw_aim_arrow(c: CanvasItem, p0: Vector2, p2: Vector2) -> void:
+	var ctrl_lift: float = clampf(absf(p2.y - p0.y) * 0.28 + 48.0, 48.0, 140.0)
+	var p1: Vector2 = (p0 + p2) * 0.5 - Vector2(0.0, ctrl_lift)
+	var pts := PackedVector2Array()
+	var steps := 22
+	for i in range(steps + 1):
+		var t: float = float(i) / float(steps)
+		var omt: float = 1.0 - t
+		var pt: Vector2 = (omt * omt) * p0 + (2.0 * omt * t) * p1 + (t * t) * p2
+		pts.append(pt)
+	c.draw_polyline(pts, Color(0.95, 0.80, 0.38, 0.24), 9.0, true)
+	c.draw_polyline(pts, Color(0.99, 0.88, 0.52, 0.92), 3.2, true)
+	var dir: Vector2 = (p2 - p1).normalized()
+	if dir.length_squared() < 0.01:
+		dir = Vector2.UP
+	var perp := Vector2(-dir.y, dir.x)
+	var head := PackedVector2Array([
+		p2 + dir * 6.0,
+		p2 - dir * 14.0 + perp * 9.0,
+		p2 - dir * 14.0 - perp * 9.0,
+	])
+	c.draw_colored_polygon(head, Color(0.99, 0.88, 0.52, 0.96))
+
+
 func _draw_fx_layer(c: CanvasItem) -> void:
+	# T8.2 Golden quadratic Bezier aiming arrow when dragging or targeting a character
+	if game_state != null and game_state.phase == "action" and pay_pending.is_empty() and hand_strip != null:
+		var arrow_idx: int = int(drag_state.get("hand_index", selected_hand_index))
+		var target_pos: Vector2 = drag_state.get("pos", _hover_mouse_pos)
+		if arrow_idx >= 0 and arrow_idx < me().hand.size() and target_pos != Vector2.ZERO:
+			var cd_sel: CardDataSystem.CardData = CardDataSystem.get_card_def(me().hand[arrow_idx])
+			var is_drag: bool = not drag_state.is_empty()
+			var needs_tgt: bool = cd_sel != null and cd_sel.needs_char
+			if is_drag or (needs_tgt and target_pos.y < hand_strip.position.y + 12.0):
+				var origin_p: Vector2 = hand_strip.get_card_global_center(arrow_idx)
+				if origin_p.distance_to(target_pos) > 28.0:
+					_draw_aim_arrow(c, origin_p, target_pos)
+
+	# T5.9 Center Card Play Preview (1.42x pop in middle of board)
+	if not _card_preview.is_empty():
+		var p_name: String = String(_card_preview.get("card_name", ""))
+		var pt: float = float(_card_preview.get("t", 0.0))
+		var pdur: float = maxf(0.01, float(_card_preview.get("dur", 0.95)))
+		var pu: float = clampf(pt / pdur, 0.0, 1.0)
+		var p_alpha: float = 1.0 if pu < 0.65 else maxf(0.0, (1.0 - pu) / 0.35)
+		var pop: float = (0.76 + 0.24 * sin(minf(pu * 3.5, 1.0) * PI * 0.5)) if pu < 0.2 else (1.0 - 0.16 * maxf(0.0, (pu - 0.78) / 0.22))
+		var pc: Vector2 = _ensure_lay().get("play_preview_center", Vector2(960, 452))
+		var cw: float = 148.0 * 1.42 * pop
+		var ch: float = 210.0 * 1.42 * pop
+		var pr := Rect2(pc.x - cw * 0.5, pc.y - ch * 0.5, cw, ch)
+		TCGTheme.draw_rounded_box(c, pr.grow(10.0), Color(0.95, 0.80, 0.42, 0.14 * p_alpha), Color(0.96, 0.84, 0.48, 0.72 * p_alpha), 16, 2.5, Vector2(0, 8), 110)
+		TCGActionCardView.draw_card_surface(c, pr, p_name, true, true, true, false, false, false)
+
 	# Flying cards with cubic ease-out, scale pop, and golden aura
 	for fc in _flying_cards:
 		var u: float = clampf(float(fc["t"]) / maxf(0.01, float(fc["dur"])), 0.0, 1.0)
@@ -2246,8 +3043,8 @@ func _draw_fx_layer(c: CanvasItem) -> void:
 		var sc: float = 0.72 + 0.40 * sin(minf(u * 1.4, 1.0) * PI * 0.5)
 		if u > 0.75:
 			sc = lerpf(1.12, 0.92, (u - 0.75) / 0.25)
-		var cw: float = 118.0 * sc
-		var ch: float = 168.0 * sc
+		var cw: float = 138.0 * sc
+		var ch: float = 196.0 * sc
 		var r := Rect2(p_cur.x - cw * 0.5, p_cur.y - ch * 0.5, cw, ch)
 		var glow_a: float = 0.38 * (1.0 - maxf(0.0, (u - 0.7) / 0.3))
 		TCGTheme.draw_rounded_box(c, r.grow(8.0), Color(0.95, 0.80, 0.42, glow_a * 0.4), Color(0.95, 0.82, 0.45, glow_a), 14, 2)
@@ -2289,15 +3086,16 @@ func _draw_fx_layer(c: CanvasItem) -> void:
 		var alpha: float = 1.0 if elapsed < max_ttl * 0.65 else maxf(0.0, ttl / (max_ttl * 0.35))
 		var text_col := Color(col.r, col.g, col.b, alpha)
 		var shadow_col := Color(0.04, 0.02, 0.01, alpha * 0.85)
-		TCGTheme.draw_text_centered(c, String(fl["text"]), pos + Vector2(2, 2), int(22.0 * pop), shadow_col, true, false)
-		TCGTheme.draw_text_centered(c, String(fl["text"]), pos, int(22.0 * pop), text_col, true, false)
+		TCGTheme.draw_text_centered(c, String(fl["text"]), pos + Vector2(2, 2), int(27.0 * pop), shadow_col, true, false)
+		TCGTheme.draw_text_centered(c, String(fl["text"]), pos, int(27.0 * pop), text_col, true, false)
 
 
 func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.04, 0.07, 0.76))
 
-	var left := Rect2(28, 138, 390, 456)
-	var right := Rect2(752, 138, 500, 456)
+	var prects := _payment_panel_rects()
+	var left: Rect2 = prects[0]
+	var right: Rect2 = prects[1]
 	TCGTheme.draw_gold_frame(c, left, Color(0.07, 0.11, 0.16, 0.98), 16, true)
 	TCGTheme.draw_gold_frame(c, right, Color(0.07, 0.11, 0.16, 0.98), 16, true)
 
@@ -2307,9 +3105,9 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 	var sel_dice: Array = pay_pending.get("selected_dice", []).duplicate()
 	sel_dice.sort()
 
-	TCGTheme.draw_text_pos(c, "ELEMENTAL TUNING" if is_tune else "ACTION PAYMENT", Vector2(left.position.x + 22, left.position.y + 18), 16, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_pos(c, title, Vector2(left.position.x + 22, left.position.y + 56), 20, TCGTheme.TEXT, true, true)
-	c.draw_line(Vector2(left.position.x + 20, left.position.y + 92), Vector2(left.end.x - 20, left.position.y + 92), TCGTheme.GOLD_D, 1.0)
+	TCGTheme.draw_text_pos(c, "ELEMENTAL TUNING" if is_tune else "ACTION PAYMENT", Vector2(left.position.x + 24, left.position.y + 18), 19, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_pos(c, title, Vector2(left.position.x + 24, left.position.y + 58), 24, TCGTheme.TEXT, true, true)
+	c.draw_line(Vector2(left.position.x + 22, left.position.y + 98), Vector2(left.end.x - 22, left.position.y + 98), TCGTheme.GOLD_D, 1.0)
 
 	var valid: bool = false
 	var total_needed: int = 1
@@ -2318,26 +3116,34 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 	if is_tune:
 		var elig := tunable_dice(view_player)
 		valid = (sel_dice.size() == 1 and elig.has(int(sel_dice[0])))
-		TCGTheme.draw_text_pos(c, "Choose 1 die to convert into %s." % p.get_active_char().get_defn().element, Vector2(left.position.x + 22, left.position.y + 114), 14, TCGTheme.TEXT, true, false)
-		TCGTheme.draw_text_pos(c, "Matching and Omni dice cannot be converted.", Vector2(left.position.x + 22, left.position.y + 142), 12, TCGTheme.DIM, false, false)
-		TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 22, left.position.y + 180, left.size.x - 44, 180), 13, TCGTheme.TEXT, 18, false)
+		TCGTheme.draw_text_pos(c, "Choose 1 die to convert into %s." % p.get_active_char().get_defn().element, Vector2(left.position.x + 24, left.position.y + 120), 17, TCGTheme.TEXT, true, false)
+		TCGTheme.draw_text_pos(c, "Matching and Omni dice cannot be converted.", Vector2(left.position.x + 24, left.position.y + 150), 14, TCGTheme.DIM, false, false)
+		TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 190, left.size.x - 48, 210), 16, TCGTheme.TEXT, 22, false)
 	else:
 		var cost: CardDataSystem.CostData = pay_pending["cost"]
 		total_needed = cost.n + cost.unaligned
 		valid = TCGDiceSystem.payment_ok(p.dice, cost, sel_dice)
-		TCGTheme.draw_text_pos(c, "REQUIRED COST", Vector2(left.position.x + 22, left.position.y + 108), 13, TCGTheme.GOLD_L, true, false)
+		TCGTheme.draw_text_pos(c, "REQUIRED COST", Vector2(left.position.x + 24, left.position.y + 114), 16, TCGTheme.GOLD_L, true, false)
 		var pairs := TCGActionCardView.cost_to_pairs(cost)
-		var gx: float = left.position.x + 36.0
+		var gx: float = left.position.x + 40.0
 		for pair in pairs:
-			TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, left.position.y + 148), 13.0)
-			gx += 34.0
+			TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, left.position.y + 156), 15.0)
+			gx += 38.0
 		var align_txt := "%d %s / Omni  +  %d Any" % [
 			cost.n,
 			cost.element if not cost.element.is_empty() else "Same Element",
 			cost.unaligned
 		]
-		TCGTheme.draw_text_pos(c, align_txt, Vector2(left.position.x + 22, left.position.y + 178), 13, TCGTheme.TEAL, true, false)
-		TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 22, left.position.y + 212, left.size.x - 44, 210), 13, TCGTheme.TEXT, 18, false)
+		TCGTheme.draw_text_pos(c, align_txt, Vector2(left.position.x + 24, left.position.y + 190), 16, TCGTheme.TEAL, true, false)
+		var prev_lines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
+		if not prev_lines.is_empty():
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 220, left.size.x - 48, 90), 15, TCGTheme.TEXT, 20, false)
+			var imp_rect := Rect2(left.position.x + 22, left.position.y + 314, left.size.x - 44, maxf(76.0, left.end.y - (left.position.y + 372.0)))
+			TCGTheme.draw_rounded_box(c, imp_rect, Color(0.05, 0.08, 0.13, 0.94), TCGTheme.GOLD_D, 10, 1)
+			TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(imp_rect.position.x + 12, imp_rect.position.y + 8), 13, TCGTheme.GOLD_L, true, true)
+			TCGTheme.draw_wrapped(c, "\n".join(prev_lines), Rect2(imp_rect.position.x + 12, imp_rect.position.y + 28, imp_rect.size.x - 24, imp_rect.size.y - 34), 14, TCGTheme.HEAL, 19, false)
+		else:
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 226, left.size.x - 48, 220), 16, TCGTheme.TEXT, 22, false)
 
 	var status_msg: String = ""
 	var status_col: Color = TCGTheme.GOLD_L
@@ -2349,11 +3155,11 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 	else:
 		status_msg = "Selected combination does not match cost"
 		status_col = TCGTheme.RED
-	TCGTheme.draw_text_pos(c, status_msg, Vector2(left.position.x + 22, left.end.y - 38), 14, status_col, true, true)
+	TCGTheme.draw_text_pos(c, status_msg, Vector2(left.position.x + 24, left.end.y - 42), 17, status_col, true, true)
 
 	# Right box: interactive dice grid
-	TCGTheme.draw_text_pos(c, "SELECT DICE TO SPEND", Vector2(right.position.x + 22, right.position.y + 18), 17, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_pos(c, "Click each die to toggle selection", Vector2(right.position.x + 22, right.position.y + 46), 13, TCGTheme.DIM, false, false)
+	TCGTheme.draw_text_pos(c, "SELECT DICE TO SPEND", Vector2(right.position.x + 24, right.position.y + 18), 20, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_pos(c, "Click each die to toggle selection", Vector2(right.position.x + 24, right.position.y + 48), 15, TCGTheme.DIM, false, false)
 
 	var elig_tune := tunable_dice(view_player)
 	for i in range(p.dice.size()):
@@ -2371,10 +3177,10 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 		var edge := TCGTheme.GOLD_L if (chosen or _pay_die_hovered == i) else (TCGTheme.GOLD if eligible else TCGTheme.DIM)
 		TCGTheme.draw_rounded_box(c, tile, fill, edge, 12, 3 if chosen else 1)
 
-		var die_box := Rect2(tile.get_center().x - 20, tile.get_center().y - 22, 40, 38)
+		var die_box := Rect2(tile.get_center().x - 24, tile.get_center().y - 26, 48, 44)
 		TCGArt.draw_die(c, face, die_box, chosen, _pay_die_hovered == i)
 		var tag := "SELECTED" if chosen else ("ELIGIBLE" if eligible else "OTHER")
-		TCGTheme.draw_text_centered(c, tag, Vector2(tile.get_center().x, tile.end.y - 9.0), 9, TCGTheme.GOLD_L if chosen else TCGTheme.DIM, true, false)
+		TCGTheme.draw_text_centered(c, tag, Vector2(tile.get_center().x, tile.end.y - 11.0), 12, TCGTheme.GOLD_L if chosen else TCGTheme.DIM, true, false)
 
 	TCGTheme.draw_plaque(c, _pay_cancel_rect(), "Cancel [Esc]", TCGTheme.RED, _pay_btn_hovered == 0)
 	TCGTheme.draw_plaque(c, _pay_confirm_rect(), "Confirm [Enter]", TCGTheme.GREEN, _pay_btn_hovered == 1, not valid)
@@ -2382,6 +3188,8 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 
 func _draw_inspect_tooltip(c: CanvasItem) -> void:
 	# Strictly click-driven inspector: hovering never opens description popups.
+	var l := _ensure_lay()
+	var safe: Rect2 = l["safe"]
 	var ikind: String = String(_inspected.get("kind", ""))
 
 	# 1. Clicked Skill button (1st click = inspect, 2nd click = try to use)
@@ -2392,31 +3200,47 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 			var skills: Array[CardDataSystem.SkillData] = c0.get_defn().skills
 			if s_idx < skills.size():
 				var sk: CardDataSystem.SkillData = skills[s_idx]
-				var box := Rect2(860, 404, 320, 134)
+				var plines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
+				var preview_h: float = (36.0 + float(mini(4, plines.size())) * 20.0) if not plines.is_empty() else 0.0
+				var box_h: float = 166.0 + preview_h
+				var sb_pos: Vector2 = l.get("skill_bar_pos", Vector2(safe.end.x - 328.0, safe.end.y - 166.0))
+				var bx: float = clampf(sb_pos.x - 108.0, safe.position.x + 12.0, safe.end.x - 432.0)
+				var by: float = clampf(sb_pos.y - box_h - 12.0, safe.position.y + 72.0, safe.end.y - box_h - 14.0)
+				var box := Rect2(bx, by, 420.0, box_h)
 				TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
-				TCGTheme.draw_text_pos(c, sk.name + "  [" + sk.kind.to_upper() + "]", Vector2(box.position.x + 12, box.position.y + 8), 13, TCGTheme.GOLD_L, true, true)
+				TCGTheme.draw_text_pos(c, sk.name + "  [" + sk.kind.to_upper() + "]", Vector2(box.position.x + 14, box.position.y + 10), 16, TCGTheme.GOLD_L, true, true)
 				var pairs := TCGActionCardView.cost_to_pairs(sk.cost)
-				var gx: float = box.position.x + 22.0
+				var gx: float = box.position.x + 26.0
 				for pair in pairs:
-					TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, box.position.y + 38), 9.5)
-					gx += 24.0
-				TCGTheme.draw_wrapped(c, sk.desc, Rect2(box.position.x + 12, box.position.y + 54, box.size.x - 24, 56), 11, TCGTheme.TEXT, 15, true)
-				TCGTheme.draw_text_pos(c, "Click skill again to use", Vector2(box.position.x + 12, box.end.y - 18), 10, TCGTheme.GOLD, true, false)
+					TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, box.position.y + 44), 11.5)
+					gx += 28.0
+				TCGTheme.draw_wrapped(c, sk.desc, Rect2(box.position.x + 14, box.position.y + 64, box.size.x - 28, 70), 14, TCGTheme.TEXT, 18, true)
+				if not plines.is_empty():
+					var iy: float = box.position.y + 136.0
+					c.draw_line(Vector2(box.position.x + 14, iy), Vector2(box.end.x - 14, iy), TCGTheme.GOLD_D, 1.0)
+					TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(box.position.x + 14, iy + 6.0), 13, TCGTheme.GOLD_L, true, true)
+					TCGTheme.draw_wrapped(c, "\n".join(plines), Rect2(box.position.x + 14, iy + 26.0, box.size.x - 28, preview_h - 24.0), 14, TCGTheme.HEAL, 19, false)
+				var can_use: bool = bool(_active_preview.get("can_use_now", true)) if bool(_active_preview.get("ok", false)) else true
+				var footer := "Click skill again to use" if can_use else String(_active_preview.get("block_reason", "Not currently usable"))
+				TCGTheme.draw_text_pos(c, footer, Vector2(box.position.x + 14, box.end.y - 22), 13, TCGTheme.GOLD if can_use else TCGTheme.RED, true, false)
 				return
 
 	# 2. Clicked Hand Card (1st click = preview card + optional Details toggle, 2nd click = try to play)
 	if selected_hand_index >= 0 and selected_hand_index < me().hand.size():
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(me().hand[selected_hand_index])
 		if cd != null:
-			var large_r := Rect2(20, 148, 210, 308)
+			var large_r := Rect2(safe.position.x + 18.0, safe.position.y + 208.0, 236.0, 346.0)
 			TCGActionCardView.draw_card_surface(c, large_r, cd.name, true, false, true, true, false, false)
 			var dbtn := _card_detail_btn_rect()
-			var d_lbl := "Hide Details ▾" if _inspect_extra_open else "Details ▸"
+			var drawer_open: bool = detail_drawer != null and detail_drawer.is_open()
+			var d_lbl := "Hide Details ▾" if (_inspect_extra_open or drawer_open) else "Details ▸"
 			TCGTheme.draw_plaque(c, dbtn, d_lbl, TCGTheme.GOLD, _inspect_btn_hovered, false, false)
-			if _inspect_extra_open:
-				var panel := Rect2(238, 148, 260, 260)
+			if _inspect_extra_open and not drawer_open:
+				var card_plines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
+				var extra_imp_h: float = (34.0 + float(mini(4, card_plines.size())) * 20.0) if not card_plines.is_empty() else 0.0
+				var panel := Rect2(large_r.end.x + 10.0, large_r.position.y, 320.0, 270.0 + extra_imp_h)
 				TCGTheme.draw_gold_frame(c, panel, Color(0.06, 0.1, 0.16, 0.97), 12, true)
-				TCGTheme.draw_text_pos(c, cd.name, Vector2(panel.position.x + 14, panel.position.y + 12), 15, TCGTheme.GOLD_L, true, true)
+				TCGTheme.draw_text_pos(c, cd.name, Vector2(panel.position.x + 16, panel.position.y + 14), 18, TCGTheme.GOLD_L, true, true)
 				var sub := cd.kind.to_upper()
 				if not cd.weapon.is_empty():
 					sub += " · " + cd.weapon.to_upper()
@@ -2424,18 +3248,27 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 					sub += " · " + cd.char_name.to_upper()
 				elif not cd.resonance.is_empty():
 					sub += " · " + cd.resonance.to_upper()
-				TCGTheme.draw_text_pos(c, sub, Vector2(panel.position.x + 14, panel.position.y + 34), 11, TCGTheme.TEAL, true, false)
-				c.draw_line(Vector2(panel.position.x + 12, panel.position.y + 56), Vector2(panel.end.x - 12, panel.position.y + 56), TCGTheme.GOLD_D, 1.0)
-				TCGTheme.draw_wrapped(c, cd.text, Rect2(panel.position.x + 14, panel.position.y + 66, panel.size.x - 28, 140), 12, TCGTheme.TEXT, 16, false)
+				TCGTheme.draw_text_pos(c, sub, Vector2(panel.position.x + 16, panel.position.y + 38), 13, TCGTheme.TEAL, true, false)
+				c.draw_line(Vector2(panel.position.x + 14, panel.position.y + 62), Vector2(panel.end.x - 14, panel.position.y + 62), TCGTheme.GOLD_D, 1.0)
+				TCGTheme.draw_wrapped(c, cd.text, Rect2(panel.position.x + 16, panel.position.y + 72, panel.size.x - 32, 138), 15, TCGTheme.TEXT, 20, false)
+				if not card_plines.is_empty():
+					var cy: float = panel.position.y + 214.0
+					c.draw_line(Vector2(panel.position.x + 14, cy), Vector2(panel.end.x - 14, cy), TCGTheme.GOLD_D, 1.0)
+					TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(panel.position.x + 16, cy + 6.0), 13, TCGTheme.GOLD_L, true, true)
+					TCGTheme.draw_wrapped(c, "\n".join(card_plines), Rect2(panel.position.x + 16, cy + 26.0, panel.size.x - 32, extra_imp_h - 22.0), 14, TCGTheme.HEAL, 19, false)
 				var hint := "Click card again to play (or select target) · [Esc] to cancel."
-				TCGTheme.draw_wrapped(c, hint, Rect2(panel.position.x + 14, panel.end.y - 44, panel.size.x - 28, 36), 10, TCGTheme.DIM, 14, false)
+				TCGTheme.draw_wrapped(c, hint, Rect2(panel.position.x + 16, panel.end.y - 46, panel.size.x - 32, 38), 12, TCGTheme.DIM, 16, false)
 			return
 
-	# 3. Clicked Support or Summon Tile
+	# When Phase 9 DetailDrawer is open, it owns zone/status/character inspection.
+	if detail_drawer != null and detail_drawer.is_open():
+		return
+
+	# 3. Clicked Support or Summon Tile (fallback when DetailDrawer unavailable)
 	if ikind == "zone" and _inspected.get("unit", null) != null:
 		var u: TCGPlayerSystem.UnitInstance = _inspected["unit"]
 		var is_sum: bool = bool(_inspected.get("is_summon", false))
-		var box := Rect2(20, 210, 290, 170)
+		var box := Rect2(safe.position.x + 20.0, safe.position.y + 210.0, 290.0, 170.0)
 		TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
 		TCGTheme.draw_text_pos(c, u.name, Vector2(box.position.x + 12, box.position.y + 10), 15, TCGTheme.GOLD_L, true, true)
 		if is_sum:
@@ -2458,7 +3291,7 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 	if ikind == "status":
 		var payload: Dictionary = _inspected.get("payload", {})
 		var pkind: String = String(payload.get("kind", ""))
-		var box := Rect2(20, 220, 300, 160)
+		var box := Rect2(safe.position.x + 20.0, safe.position.y + 220.0, 300.0, 160.0)
 		TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
 		if pkind == "aura":
 			var aura_el: String = String(payload.get("aura", ""))
@@ -2497,7 +3330,7 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 			var ch_st: TCGPlayerSystem.CharacterInstance = game_state.players[p_idx].characters[c_idx]
 			var cd: CardDataSystem.CharData = ch_st.get_defn()
 			if cd != null:
-				var box := Rect2(18, 120, 320, 420)
+				var box := Rect2(safe.position.x + 18.0, safe.position.y + 120.0, 320.0, 420.0)
 				TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 12, true)
 				TCGTheme.draw_text_pos(
 					c,
@@ -2549,19 +3382,22 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 				TCGTheme.draw_text_pos(c, char_hint, Vector2(box.position.x + 14, box.end.y - 20), 10, TCGTheme.DIM, false, false)
 
 
-func _draw_toasts(c: CanvasItem, w: float) -> void:
-	var y: float = 64.0
+func _draw_toasts(c: CanvasItem, _w: float) -> void:
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var y: float = safe.position.y + 66.0
 	for t in _toasts:
 		var txt: String = String(t["text"])
 		var col: Color = t["col"]
-		var pill := Rect2(w * 0.5 - 240.0, y, 480.0, 28.0)
-		TCGTheme.draw_rounded_box(c, pill, Color(0.05, 0.08, 0.13, 0.94), col, 14, 1)
-		TCGTheme.draw_text_centered(c, txt, pill.get_center(), 12, col, true, true)
-		y += 32.0
+		var pill := Rect2(safe.get_center().x - 280.0, y, 560.0, 36.0)
+		TCGTheme.draw_rounded_box(c, pill, Color(0.05, 0.08, 0.13, 0.94), col, 16, 1)
+		TCGTheme.draw_text_centered(c, txt, pill.get_center(), 15, col, true, true)
+		y += 40.0
 
 
 func _draw_game_over_overlay(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.05, 0.76))
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var center := safe.get_center()
 	var win_p: int = game_state.winner
 	var msg := "Draw"
 	var col := TCGTheme.TEXT
@@ -2572,25 +3408,27 @@ func _draw_game_over_overlay(c: CanvasItem, w: float, h: float) -> void:
 		else:
 			msg = "%s Wins!" % player_labels[win_p]
 			col = TCGTheme.GOLD_L
-	TCGTheme.draw_text_centered(c, msg, Vector2(w * 0.5, 290.0), 56, col, true, true)
-	TCGTheme.draw_text_centered(c, "Press [R] for Rematch   ·   Press [Esc] for Menu", Vector2(w * 0.5, 354.0), 17, TCGTheme.TEXT, false, true)
+	TCGTheme.draw_text_centered(c, msg, Vector2(center.x, center.y - 76.0), 64, col, true, true)
+	TCGTheme.draw_text_centered(c, "Press [R] for Rematch   ·   Press [Esc] for Menu", Vector2(center.x, center.y - 6.0), 21, TCGTheme.TEXT, false, true)
 	TCGTheme.draw_plaque(c, _game_over_rect(0), "Rematch", TCGTheme.GREEN, _over_hover_idx == 0)
 	TCGTheme.draw_plaque(c, _game_over_rect(1), "Main Menu", TCGTheme.GOLD, _over_hover_idx == 1)
 
 
 func _draw_coin_intro(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.06, 0.72))
-	var panel := Rect2(w * 0.5 - 230.0, h * 0.5 - 120.0, 460.0, 230.0)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var center: Vector2 = safe.get_center()
+	var panel := Rect2(center.x - 260.0, center.y - 130.0, 520.0, 260.0)
 	TCGTheme.draw_gold_frame(c, panel, TCGTheme.PANEL, 16, true)
 	var cx: float = panel.get_center().x
-	var cy: float = panel.position.y + 82.0
+	var cy: float = panel.position.y + 92.0
 	var spinning: bool = _intro_t < 1.25
 	var flip_scale: float = absf(cos(_intro_t * PI * 6.0)) if spinning else 1.0
-	var rx: float = maxf(6.0, 38.0 * flip_scale)
+	var rx: float = maxf(6.0, 44.0 * flip_scale)
 	var pts := PackedVector2Array()
 	for i in range(28):
 		var ang: float = TAU * float(i) / 28.0
-		pts.append(Vector2(cx + cos(ang) * rx, cy + sin(ang) * 38.0))
+		pts.append(Vector2(cx + cos(ang) * rx, cy + sin(ang) * 44.0))
 	var fp: int = game_state.first_player
 	var coin_col := TCGTheme.GOLD_L if (fp == 0 or spinning) else TCGTheme.TEAL
 	c.draw_colored_polygon(pts, coin_col)
@@ -2598,27 +3436,31 @@ func _draw_coin_intro(c: CanvasItem, w: float, h: float) -> void:
 	rim.append(pts[0])
 	c.draw_polyline(rim, TCGTheme.GOLD, 3.0)
 	if not spinning:
-		TCGTheme.draw_text_centered(c, "I" if fp == 0 else "II", Vector2(cx, cy), 28, TCGTheme.PANEL2, true, false)
+		TCGTheme.draw_text_centered(c, "I" if fp == 0 else "II", Vector2(cx, cy), 34, TCGTheme.PANEL2, true, false)
 	var who_fp: String = _who(fp)
 	var first_txt: String = "You go first!" if who_fp == "You" else ("%s goes first!" % who_fp)
 	var title: String = "Flipping Coin…" if spinning else first_txt
-	TCGTheme.draw_text_centered(c, title, Vector2(cx, panel.position.y + 150.0), 22, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(c, "Click or press Space to continue" if not spinning else "Determining Turn Order", Vector2(cx, panel.position.y + 186.0), 13, TCGTheme.DIM, false, true)
+	TCGTheme.draw_text_centered(c, title, Vector2(cx, panel.position.y + 170.0), 26, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(c, "Click or press Space to continue" if not spinning else "Determining Turn Order", Vector2(cx, panel.position.y + 210.0), 16, TCGTheme.DIM, false, true)
 
 
 func _draw_hotseat_cover(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_rect(Rect2(0, 0, w, h), Color(0.03, 0.05, 0.09, 0.94))
-	var panel := Rect2(w * 0.5 - 240.0, h * 0.5 - 95.0, 480.0, 190.0)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var center: Vector2 = safe.get_center()
+	var panel := Rect2(center.x - 270.0, center.y - 110.0, 540.0, 220.0)
 	TCGTheme.draw_gold_frame(c, panel, TCGTheme.PANEL, 16, true)
-	TCGTheme.draw_text_centered(c, "PASS DEVICE TO %s" % _who(_hotseat_cover).to_upper(), Vector2(panel.get_center().x, panel.position.y + 64.0), 22, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(c, "Click anywhere or press Space / Enter to reveal your hand", Vector2(panel.get_center().x, panel.position.y + 114.0), 14, TCGTheme.TEXT, false, true)
+	TCGTheme.draw_text_centered(c, "PASS DEVICE TO %s" % _who(_hotseat_cover).to_upper(), Vector2(panel.get_center().x, panel.position.y + 74.0), 26, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(c, "Click anywhere or press Space / Enter to reveal your hand", Vector2(panel.get_center().x, panel.position.y + 132.0), 17, TCGTheme.TEXT, false, true)
 
 
 func _draw_pause_modal(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.68))
-	var modal := Rect2(440, 175, 400, 295)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var center: Vector2 = safe.get_center()
+	var modal := Rect2(center.x - 230.0, center.y - 170.0, 460.0, 340.0)
 	TCGTheme.draw_gold_frame(c, modal, TCGTheme.PANEL, 16, true)
-	TCGTheme.draw_text_centered(c, "MATCH PAUSED", Vector2(modal.get_center().x, modal.position.y + 42.0), 24, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(c, "MATCH PAUSED", Vector2(modal.get_center().x, modal.position.y + 48.0), 28, TCGTheme.GOLD_L, true, true)
 	TCGTheme.draw_plaque(c, _pause_option_rect(0), "Resume Match", TCGTheme.GREEN, _pause_hover_idx == 0)
 	TCGTheme.draw_plaque(c, _pause_option_rect(1), "Return to Main Menu", TCGTheme.GOLD, _pause_hover_idx == 1)
 	TCGTheme.draw_plaque(c, _pause_option_rect(2), "Quit Game", TCGTheme.RED, _pause_hover_idx == 2)

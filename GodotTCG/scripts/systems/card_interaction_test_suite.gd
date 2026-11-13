@@ -29,6 +29,8 @@ static func run_all_tests() -> Dictionary:
 		_test_14_one_click_roll_and_drag_tune_on_tray,
 		_test_15_mulligan_confirm_button_click_in_tree,
 		_test_16_hover_shows_no_details_and_click_twice_plays,
+		_test_17_choose_active_one_click_and_drawer_outside_click,
+		_test_18_skill_and_card_damage_reaction_preview,
 	]
 
 	var passed: int = 0
@@ -611,3 +613,153 @@ static func _test_16_hover_shows_no_details_and_click_twice_plays() -> Dictionar
 
 	board.free()
 	return {"name": name, "ok": true, "error": ""}
+
+
+static func _test_17_choose_active_one_click_and_drawer_outside_click() -> Dictionary:
+	var name := "17. Select Active Character takes 1 click; DetailDrawer forwards outside char clicks"
+	# Part A: Setup choose_active accepts 1 left-click without opening details
+	var setup_board := _make_board(93, false)
+	setup_board.skip_intro()
+	setup_board.hotseat = false
+	setup_board.dismiss_hotseat_cover()
+	setup_board._compute_board_layout(Vector2(1920, 1080))
+	for _step in range(4):
+		var cur_act := setup_board.actor()
+		if cur_act >= 0:
+			setup_board.view_player = cur_act
+		setup_board.dismiss_hotseat_cover()
+		setup_board.sync_from_state()
+		if setup_board._is_choose_active_phase():
+			break
+		if setup_board.is_mulligan_stage():
+			setup_board._confirm_mulligan()
+	setup_board.dismiss_hotseat_cover()
+	if setup_board.input_controller != null:
+		setup_board.input_controller._last_action_ms = -1000
+	setup_board.sync_from_state()
+	var choosing_p: int = setup_board.view_player
+	if not setup_board._is_choose_active_phase():
+		setup_board.free()
+		return {"name": name, "ok": false, "error": "Failed to reach setup choose_active phase"}
+
+	# Right-click style char inspect still works during choose_active
+	setup_board._on_status_icon_clicked({"kind": "char", "side": 0, "index": 2})
+	if not setup_board.detail_drawer.is_open():
+		setup_board.free()
+		return {"name": name, "ok": false, "error": "Right-click inspect should still open DetailDrawer during choose_active"}
+
+	# Single left-click (even while DetailDrawer is open!) must select active char immediately
+	var char1_pos: Vector2 = setup_board.own_char_slots[1].position + Vector2(30, 30)
+	var clk := InputEventMouseButton.new()
+	clk.button_index = MOUSE_BUTTON_LEFT
+	clk.pressed = true
+	clk.position = char1_pos
+	setup_board.detail_drawer._on_backdrop_input(clk)
+	var first_chosen_ok: bool = (setup_board.game_state.players[choosing_p].chosen == 1 or setup_board.game_state.players[choosing_p].active == 1)
+	if not first_chosen_ok or setup_board.detail_drawer.is_open():
+		var dbg := "choosing_p=%d chosen=%d act=%d open=%s" % [
+			choosing_p,
+			setup_board.game_state.players[choosing_p].chosen,
+			setup_board.game_state.players[choosing_p].active,
+			str(setup_board.detail_drawer.is_open()),
+		]
+		setup_board.free()
+		return {"name": name, "ok": false, "error": "1 click during choose_active failed: " + dbg}
+
+	# Second player also chooses active in 1 click -> reveals active chars & starts Roll Phase
+	var second_p: int = setup_board.actor()
+	if second_p >= 0 and setup_board.game_state.phase == "setup":
+		setup_board.view_player = second_p
+		setup_board.dismiss_hotseat_cover()
+		if setup_board.input_controller != null:
+			setup_board.input_controller._last_action_ms = -1000
+		setup_board.sync_from_state()
+		setup_board._on_char_slot_clicked(0, 2)
+		if setup_board.game_state.players[choosing_p].active != 1 or setup_board.game_state.players[second_p].active != 2 or setup_board.game_state.phase != "roll":
+			setup_board.free()
+			return {"name": name, "ok": false, "error": "Second choose_active 1-click did not reveal actives and enter roll phase"}
+	setup_board.free()
+
+	# Part B: Action phase Click-1 opens DetailDrawer, Click-2 on same char through backdrop opens Switch Payment
+	var act_board := _make_board(94, true)
+	act_board.skip_intro()
+	act_board.hotseat = false
+	act_board.dismiss_hotseat_cover()
+	act_board._compute_board_layout(Vector2(1920, 1080))
+	act_board.me().dice.assign(["Omni", "Omni", "Omni", "Omni"])
+	act_board.sync_from_state()
+	var bench_idx: int = 1 if act_board.me().active != 1 else 2
+	act_board._on_char_slot_clicked(0, bench_idx)
+	if not act_board.detail_drawer.is_open() or String(act_board._inspected.get("kind", "")) != "char":
+		act_board.free()
+		return {"name": name, "ok": false, "error": "Action phase 1st char click should open DetailDrawer"}
+	var clk2 := InputEventMouseButton.new()
+	clk2.button_index = MOUSE_BUTTON_LEFT
+	clk2.pressed = true
+	clk2.position = act_board.own_char_slots[bench_idx].position + Vector2(30, 30)
+	act_board.detail_drawer._on_backdrop_input(clk2)
+	var switch_opened: bool = not act_board.pay_pending.is_empty() and not act_board.detail_drawer.is_open()
+	act_board.free()
+	if not switch_opened:
+		return {"name": name, "ok": false, "error": "Action phase 2nd click on inspected char via DetailDrawer backdrop must open Switch payment"}
+
+	return {"name": name, "ok": true, "error": ""}
+
+
+static func _test_18_skill_and_card_damage_reaction_preview() -> Dictionary:
+	var name := "18. Clicking skill shows live DMG + Reaction preview on foe cards without mutating state"
+	var board := _make_board(95, true)
+	board.skip_intro()
+	board.hotseat = false
+	board.dismiss_hotseat_cover()
+	var p := board.me()
+	var f: TCGPlayerSystem.PlayerState = board.game_state.players[1 - board.view_player]
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10)
+	p.active = 0
+	p.dice.assign(["Electro", "Electro", "Electro", "Omni"])
+	f.characters[0] = TCGPlayerSystem.CharacterInstance.new("Kaeya", 5)
+	f.characters[0].aura = CardDataSystem.CRYO
+	f.characters[1] = TCGPlayerSystem.CharacterInstance.new("Ganyu", 10)
+	f.characters[2] = TCGPlayerSystem.CharacterInstance.new("Xingqiu", 10)
+	f.active = 0
+	board.sync_from_state()
+
+	# Hovering skill must NOT trigger board preview overlays (click-driven only)
+	board._on_skill_hovered(1, true)
+	if not board.foe_char_slots[0].preview_info.is_empty():
+		board.free()
+		return {"name": name, "ok": false, "error": "Hovering skill should not populate character card preview overlays"}
+	board._on_skill_hovered(1, false)
+
+	# Click 1 on Normal Attack -> shows 2 Physical DMG (5->3 HP) on foe active card
+	board._on_skill_clicked(0)
+	var na_prev: Dictionary = board.foe_char_slots[0].preview_info
+	if int(na_prev.get("total_dmg", 0)) != 2 or int(na_prev.get("hp_after", -1)) != 3 or f.characters[0].hp != 5:
+		board.free()
+		return {"name": name, "ok": false, "error": "Click-1 Normal Attack preview failed: " + str(na_prev)}
+
+	# Click 1 on Elemental Skill -> shows 4 Electro DMG (Superconduct +1) + 1 Piercing on bench
+	board._on_skill_clicked(1)
+	var sk0: Dictionary = board.foe_char_slots[0].preview_info
+	var sk1: Dictionary = board.foe_char_slots[1].preview_info
+	var sk2: Dictionary = board.foe_char_slots[2].preview_info
+	if int(sk0.get("total_dmg", 0)) != 4 or String(sk0.get("reaction", "")) != "Superconduct":
+		board.free()
+		return {"name": name, "ok": false, "error": "Click-1 Skill Superconduct preview failed: " + str(sk0)}
+	if int(sk1.get("piercing_dmg", 0)) != 1 or int(sk2.get("piercing_dmg", 0)) != 1:
+		board.free()
+		return {"name": name, "ok": false, "error": "Click-1 Superconduct bench piercing preview missing"}
+
+	# Click 2 on Elemental Skill -> Payment modal opens while preview remains visible until cancelled
+	board._on_skill_clicked(1)
+	if board.pay_pending.is_empty() or int(board.foe_char_slots[0].preview_info.get("total_dmg", 0)) != 4:
+		board.free()
+		return {"name": name, "ok": false, "error": "Click-2 payment modal should keep action preview visible"}
+	board.cancel_payment_modal()
+	if not board.foe_char_slots[0].preview_info.is_empty() or f.characters[0].hp != 5:
+		board.free()
+		return {"name": name, "ok": false, "error": "Cancelling payment modal should clear preview & keep HP untouched"}
+
+	board.free()
+	return {"name": name, "ok": true, "error": ""}
+

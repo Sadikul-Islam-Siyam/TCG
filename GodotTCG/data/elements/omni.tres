@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ElementData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/cards/element_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"Omni"
+display_name = "Omni"
+color = Color(0.956863, 0.952941, 1, 1)
+light_color = Color(1, 1, 1, 1)
+dark_color = Color(0.227451, 0.203922, 0.290196, 1)
+can_attach = false
+shape_tag = "star"
+

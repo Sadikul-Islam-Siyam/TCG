@@ -37,26 +37,73 @@ static func draw_cards(state: TCGGameState, player_idx: int, count: int) -> void
 	var p := state.players[player_idx]
 	for _i in range(count):
 		if not p.deck.is_empty():
+			var before_hand: int = p.hand.size()
 			var c: String = p.deck.pop_back()
 			if p.hand.size() < CardDataSystem.MAX_HAND:
 				p.hand.append(c)
+				state.add_game_event(GameEvent.make(
+					GameEvent.Type.CARD_DRAWN,
+					player_idx,
+					-1,
+					c,
+					"",
+					1,
+					before_hand,
+					p.hand.size(),
+					"draw"
+				))
+			else:
+				state.add_game_event(GameEvent.make(
+					GameEvent.Type.CARD_DISCARDED,
+					player_idx,
+					-1,
+					c,
+					"",
+					1,
+					before_hand,
+					p.hand.size(),
+					"burn"
+				))
 
 
 static func begin_round(state: TCGGameState, is_first: bool = false) -> void:
 	## Starts a new round and enters the Roll Phase (`engine/rules.py:_begin_round`).
 	if not is_first:
+		state.add_game_event(GameEvent.make(GameEvent.Type.ROUND_ENDED, state.first_player, -1, "", "", state.round_number))
 		state.round_number += 1
 		if state.first_ender >= 0:
 			state.first_player = state.first_ender
 	state.first_ender = -1
 	state.phase = "roll"
-	for p in state.players:
+	state.add_log("-- Round %d --" % state.round_number)
+	state.add_event("round", {"number": state.round_number})
+	state.add_game_event(GameEvent.make(
+		GameEvent.Type.ROUND_STARTED,
+		state.first_player,
+		-1,
+		"",
+		"",
+		state.round_number,
+		null,
+		state.first_player
+	))
+	for pi in range(state.players.size()):
+		var p := state.players[pi]
+		var before_dice := p.dice.duplicate()
 		p.dice = roll_dice(state.rng, CardDataSystem.DICE_PER_ROUND)
 		p.rerolls = 1
 		p.roll_done = false
 		p.ended = false
-	state.add_log("-- Round %d --" % state.round_number)
-	state.add_event("round", {"number": state.round_number})
+		state.add_game_event(GameEvent.make(
+			GameEvent.Type.DICE_ROLLED,
+			pi,
+			-1,
+			"",
+			"",
+			p.dice.size(),
+			before_dice,
+			p.dice.duplicate()
+		))
 
 
 static func start_action_phase(state: TCGGameState, ctx_factory: Callable = Callable()) -> void:
@@ -64,6 +111,7 @@ static func start_action_phase(state: TCGGameState, ctx_factory: Callable = Call
 	state.phase = "action"
 	state.current = state.first_player
 	state.add_event("phase", {"name": "action", "first": state.first_player})
+	state.add_game_event(GameEvent.make(GameEvent.Type.PHASE_CHANGED, state.first_player, -1, "action", "", state.round_number))
 
 	var order: Array[int] = [state.first_player, 1 - state.first_player]
 	for p_idx in order:

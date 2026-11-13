@@ -96,6 +96,7 @@ static func run_all_tests() -> Dictionary:
 		["test_paimon_gives_dice_at_action_start", Callable(TCGRulesTestSuite, "_test_paimon_action_start")],
 		["test_changing_shifts_and_leave_it_to_me", Callable(TCGRulesTestSuite, "_test_changing_shifts_and_leave_it")],
 		["test_resonance_card_and_reflection", Callable(TCGRulesTestSuite, "_test_resonance_and_reflection")],
+		["test_preview_skill_and_card_no_mutation", Callable(TCGRulesTestSuite, "_test_preview_skill_and_card_no_mutation")],
 	]
 
 	var passed: int = 0
@@ -659,4 +660,47 @@ static func _test_resonance_and_reflection() -> String:
 	if s.players[1].characters[0].hp != 5:
 		return "Reflection should be spent after 1 hit"
 	return ""
+
+
+static func _test_preview_skill_and_card_no_mutation() -> String:
+	var s := _start(["Keqing", "Fischl", "Diluc"], ["Kaeya", "Ganyu", "Xingqiu"])
+	# 1. Normal Attack preview (2 Physical DMG)
+	var prev_na := TCGRulesEngine.preview_skill(s, 0, 0)
+	if not bool(prev_na.get("ok", false)):
+		return "preview_skill(0) failed"
+	var f0_na: Dictionary = prev_na.get("foe_chars", {}).get(0, {})
+	if int(f0_na.get("total_dmg", 0)) != 2 or int(f0_na.get("hp_after", -1)) != 8 or s.players[1].characters[0].hp != 10:
+		return "Normal Attack preview mismatch or mutated state: " + str(f0_na)
+
+	# 2. Overloaded + Crystallize Shield absorption + forced switch preview
+	s.players[1].characters[0].aura = CardDataSystem.PYRO
+	TCGRulesEngine.add_status(s.players[1].combat, "Crystallize Shield")
+	var prev_sk := TCGRulesEngine.preview_skill(s, 0, 1)
+	var f0_ov: Dictionary = prev_sk.get("foe_chars", {}).get(0, {})
+	var f1_ov: Dictionary = prev_sk.get("foe_chars", {}).get(1, {})
+	if int(f0_ov.get("total_dmg", 0)) != 5 or int(f0_ov.get("shield_dmg", 0)) != 1 or int(f0_ov.get("hp_after", -1)) != 6:
+		return "Overloaded + shield preview mismatch: " + str(f0_ov)
+	if String(f0_ov.get("reaction", "")) != "Overloaded" or not bool(f0_ov.get("forced_switch_out", false)) or not bool(f1_ov.get("forced_switch_in", false)):
+		return "Overloaded forced-switch flags missing: " + str(f0_ov) + " / " + str(f1_ov)
+	# Ensure live state completely untouched
+	if s.players[1].characters[0].hp != 10 or s.players[1].characters[0].aura != CardDataSystem.PYRO or s.players[1].active != 0 or s.players[1].combat.size() != 1:
+		return "preview_skill mutated live game state!"
+
+	# 3. Electro-Charged + standby Piercing damage + Talent card preview
+	s.players[1].combat.clear()
+	s.players[1].characters[0].aura = CardDataSystem.HYDRO
+	var prev_ec := TCGRulesEngine.preview_skill(s, 0, 1)
+	var f1_ec: Dictionary = prev_ec.get("foe_chars", {}).get(1, {})
+	var f2_ec: Dictionary = prev_ec.get("foe_chars", {}).get(2, {})
+	if String(prev_ec.get("foe_chars", {}).get(0, {}).get("reaction", "")) != "Electro-Charged":
+		return "Expected Electro-Charged reaction in preview"
+	if int(f1_ec.get("piercing_dmg", 0)) != 1 or int(f2_ec.get("piercing_dmg", 0)) != 1:
+		return "Expected 1 Piercing DMG on standby foes for Electro-Charged"
+
+	_give(s, 0, ["Thundering Penance"])
+	var prev_card := TCGRulesEngine.preview_card(s, 0, 0, 0)
+	if not bool(prev_card.get("ok", false)) or int(prev_card.get("foe_chars", {}).get(0, {}).get("total_dmg", 0)) != 4 or s.players[0].hand.size() != 1:
+		return "Talent preview_card mismatch or mutated hand: " + str(prev_card)
+	return ""
+
 

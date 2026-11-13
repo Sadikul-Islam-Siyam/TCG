@@ -44,6 +44,7 @@ static func declare_end_round(state: TCGGameState, player_idx: int) -> bool:
 	if state.first_ender < 0:
 		state.first_ender = player_idx
 	state.add_event("end_round", {"player": player_idx})
+	state.add_game_event(GameEvent.make(GameEvent.Type.ROUND_ENDED, player_idx, -1, "declare", "", state.round_number))
 	if state.players[1 - player_idx].ended:
 		return true
 	state.current = 1 - player_idx
