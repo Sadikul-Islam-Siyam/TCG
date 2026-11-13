@@ -3201,12 +3201,17 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 			if s_idx < skills.size():
 				var sk: CardDataSystem.SkillData = skills[s_idx]
 				var plines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
-				var preview_h: float = (36.0 + float(mini(4, plines.size())) * 20.0) if not plines.is_empty() else 0.0
-				var box_h: float = 166.0 + preview_h
+				var imp_rows := 0
+				for pl in plines:
+					imp_rows += maxi(1, int(ceil(float(String(pl).length()) / 42.0)))
+				imp_rows = mini(6, imp_rows)
+				var preview_h: float = (42.0 + float(imp_rows) * 20.0) if not plines.is_empty() else 0.0
+				var box_w: float = 436.0
+				var box_h: float = 168.0 + preview_h
 				var sb_pos: Vector2 = l.get("skill_bar_pos", Vector2(safe.end.x - 328.0, safe.end.y - 166.0))
-				var bx: float = clampf(sb_pos.x - 108.0, safe.position.x + 12.0, safe.end.x - 432.0)
+				var bx: float = clampf(sb_pos.x - 124.0, safe.position.x + 12.0, safe.end.x - box_w - 12.0)
 				var by: float = clampf(sb_pos.y - box_h - 12.0, safe.position.y + 72.0, safe.end.y - box_h - 14.0)
-				var box := Rect2(bx, by, 420.0, box_h)
+				var box := Rect2(bx, by, box_w, box_h)
 				TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
 				TCGTheme.draw_text_pos(c, sk.name + "  [" + sk.kind.to_upper() + "]", Vector2(box.position.x + 14, box.position.y + 10), 16, TCGTheme.GOLD_L, true, true)
 				var pairs := TCGActionCardView.cost_to_pairs(sk.cost)
@@ -3222,7 +3227,7 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 					TCGTheme.draw_wrapped(c, "\n".join(plines), Rect2(box.position.x + 14, iy + 26.0, box.size.x - 28, preview_h - 24.0), 14, TCGTheme.HEAL, 19, false)
 				var can_use: bool = bool(_active_preview.get("can_use_now", true)) if bool(_active_preview.get("ok", false)) else true
 				var footer := "Click skill again to use" if can_use else String(_active_preview.get("block_reason", "Not currently usable"))
-				TCGTheme.draw_text_pos(c, footer, Vector2(box.position.x + 14, box.end.y - 22), 13, TCGTheme.GOLD if can_use else TCGTheme.RED, true, false)
+				TCGTheme.draw_text_pos(c, footer, Vector2(box.position.x + 14, box.end.y - 24), 13, TCGTheme.GOLD if can_use else TCGTheme.RED, true, false)
 				return
 
 	# 2. Clicked Hand Card (1st click = preview card + optional Details toggle, 2nd click = try to play)
