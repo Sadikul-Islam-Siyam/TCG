@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/battle_log_panel.gd" id="1_bl"]
+
+[node name="BattleLogPanel" type="Control"]
+custom_minimum_size = Vector2(160, 148)
+layout_mode = 3
+anchors_preset = 0
+offset_right = 160.0
+offset_bottom = 148.0
+script = ExtResource("1_bl")
+

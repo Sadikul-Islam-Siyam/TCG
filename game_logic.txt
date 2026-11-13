@@ -1,0 +1,1569 @@
+GENIUS INVOKATION TCG CLONE: GAME LOGIC (all rules and content, no graphics, no AI)
+==============================================================================
+
+How the files fit together:
+  engine/core.py       constants (elements, dice faces), Cost and Action types
+  engine/dice.py       roll dice, check and auto-pick a dice payment
+  engine/registry.py   dataclasses for characters, skills, statuses, summons, cards + registries
+  engine/model.py      mutable state: Status, Unit, Character, Player, GameState (with clone())
+  engine/rules.py      the rules: setup, rounds, actions, damage pipeline, reactions
+  engine/csp.py        small constraint solver (deck auto-fill)
+  engine/deck.py       deck validation, auto-fill, share codes
+  content/*.py         the data: characters, statuses, summons, cards, preset decks
+
+Public engine API:  new_game(...), actor(state), legal_actions(state), apply_action(state, action)
+
+==============================================================================
+
+##############################################################################
+# FILE: engine/core.py   (Constants, costs, actions, 38 lines)
+##############################################################################
+
+"""Constants and small value types shared by the whole engine."""
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+CRYO, HYDRO, PYRO, ELECTRO, ANEMO, GEO = "Cryo", "Hydro", "Pyro", "Electro", "Anemo", "Geo"
+ELEMENTS = (CRYO, HYDRO, PYRO, ELECTRO, ANEMO, GEO)      # Dendro intentionally excluded
+AURA_ELEMENTS = (CRYO, HYDRO, PYRO, ELECTRO)             # Anemo / Geo never leave an aura
+OMNI, PHYSICAL, PIERCING = "Omni", "Physical", "Piercing"
+DICE_FACES = ELEMENTS + (OMNI,)
+# Omni keeps the original 1/8 chance; the six elements share the rest (7/48 each)
+DICE_WEIGHTS = (7 / 48,) * 6 + (1 / 8,)
+
+DICE_PER_ROUND, MAX_DICE, MAX_HAND = 8, 16, 10
+MAX_SUMMONS, MAX_SUPPORTS = 4, 4
+HAND_START, DRAW_END = 5, 2
+
+
+@dataclass(frozen=True)
+class Cost:
+    element: Optional[str] = None   # element the matching dice must be (Omni also works)
+    n: int = 0                      # how many dice of that element
+    unaligned: int = 0              # any dice
+    energy: int = 0                 # energy the character must have (bursts)
+
+
+@dataclass(frozen=True)
+class Action:
+    type: str                       # mulligan choose_active confirm_roll reroll skill switch card tune end_round
+    player: int
+    index: int = -1                 # skill index / hand index / character index
+    target: int = -1                # card target character, or die index for tuning
+    dice: Tuple[int, ...] = ()      # indices of dice paid
+    ids: Tuple[int, ...] = ()       # hand indices (mulligan) or dice indices (reroll)
+
+
+class IllegalAction(Exception):
+    pass
+
+
+##############################################################################
+# FILE: engine/dice.py   (Dice rolling and payment, 42 lines)
+##############################################################################
+
+"""Dice rolling and payment (cost solving)."""
+from collections import Counter
+from .core import DICE_FACES, DICE_WEIGHTS, OMNI
+
+
+def roll(rng, n):
+    return rng.choices(DICE_FACES, weights=DICE_WEIGHTS, k=n)
+
+
+def payment_ok(dice, cost, idx):
+    """True if the dice at `idx` exactly pay `cost`."""
+    if len(set(idx)) != len(idx) or any(not 0 <= i < len(dice) for i in idx):
+        return False
+    if len(idx) != cost.n + cost.unaligned:
+        return False
+    good = sum(1 for i in idx if dice[i] in (cost.element, OMNI))
+    return good >= cost.n
+
+
+def auto_pay(dice, cost, keep=()):
+    """Cheapest legal payment (tuple of dice indices) or None.
+    Spends exact-element dice first, Omni last, and prefers elements the player has
+    no character for when paying unaligned costs."""
+    chosen, used, need = [], set(), cost.n
+    for want in (cost.element, OMNI):
+        for i, d in enumerate(dice):
+            if need and d == want and i not in used:
+                chosen.append(i); used.add(i); need -= 1
+    if need:
+        return None
+    rest = [i for i in range(len(dice)) if i not in used]
+    if len(rest) < cost.unaligned:
+        return None
+    counts = Counter(dice[i] for i in rest)
+
+    def priority(i):
+        d = dice[i]
+        return (2, 0) if d == OMNI else (1 if d in keep else 0, -counts[d])
+
+    rest.sort(key=priority)
+    return tuple(sorted(chosen + rest[:cost.unaligned]))
+
+
+##############################################################################
+# FILE: engine/registry.py   (Definition classes and registries, 73 lines)
+##############################################################################
+
+"""Definition classes and global registries filled by the content package."""
+from dataclasses import dataclass
+from typing import Callable, Optional, Tuple
+from .core import Cost
+
+CHAR_DEFS, STATUS_DEFS, SUMMON_DEFS, CARD_DEFS = {}, {}, {}, {}
+
+
+@dataclass
+class SkillDef:
+    name: str
+    kind: str                # normal | skill | burst
+    cost: Cost
+    effect: Callable
+    desc: str = ""                         # human-readable effect, filled in by content
+
+
+@dataclass
+class CharDef:
+    name: str
+    element: str
+    weapon: str
+    max_energy: int
+    skills: Tuple[SkillDef, ...]
+    hp: int = 10
+
+
+@dataclass
+class StatusDef:
+    name: str
+    usages: Optional[int] = None
+    duration: Optional[int] = None
+    shield: int = 0
+    max_shield: int = 99
+    reduce: int = 0                      # damage reduction per hit (uses a usage)
+    reduce_min: int = 0                  # only when incoming damage >= this
+    outgoing: Optional[Callable] = None      # (state, owner, status, dmg_dict)
+    after_skill: Optional[Callable] = None   # (state, owner, status, skill_kind)
+    text: str = ""                           # shown in tooltips
+    on_kill: Optional[Callable] = None       # (state, owner, status) when the owner's attack defeats a character
+    per_round: Optional[int] = None          # usages restored every End Phase
+
+
+@dataclass
+class SummonDef:
+    name: str
+    element: str
+    damage: int
+    usages: int
+
+
+@dataclass
+class CardDef:
+    name: str
+    kind: str                # event | support
+    cost: Cost
+    play: Optional[Callable] = None          # (ctx, target_index)
+    needs_char: bool = False
+    usages: Optional[int] = None
+    action_start: Optional[Callable] = None  # supports: (ctx)
+    end_phase: Optional[Callable] = None     # supports: (ctx)
+    char: Optional[str] = None               # talent: required character name
+    skill: int = 1                           # talent: skill index used immediately
+    weapon: Optional[str] = None             # weapon: required weapon type
+    status: Optional[str] = None             # equipment: status granted while equipped
+    resonance: Optional[str] = None          # needs 2 characters of this element
+    text: str = ""                           # effect text shown on the card in the deck
+
+
+def register(registry, obj):
+    registry[obj.name] = obj
+    return obj
+
+
+##############################################################################
+# FILE: engine/model.py   (Game state classes, 91 lines)
+##############################################################################
+
+"""Mutable game-state classes. Everything has a fast clone() for AI search."""
+import random
+from .registry import CHAR_DEFS
+
+
+class Status:
+    __slots__ = ("name", "usages", "duration", "shield")
+
+    def __init__(self, name, usages=None, duration=None, shield=0):
+        self.name, self.usages, self.duration, self.shield = name, usages, duration, shield
+
+    def clone(self):
+        return Status(self.name, self.usages, self.duration, self.shield)
+
+
+class Unit:
+    """A summon or a support card on the board."""
+    __slots__ = ("name", "usages")
+
+    def __init__(self, name, usages=None):
+        self.name, self.usages = name, usages
+
+    def clone(self):
+        return Unit(self.name, self.usages)
+
+
+class Character:
+    __slots__ = ("name", "hp", "energy", "aura", "statuses", "defeated", "equipment")
+
+    def __init__(self, name):
+        self.name, self.hp, self.energy = name, CHAR_DEFS[name].hp, 0
+        self.aura, self.statuses, self.defeated, self.equipment = None, [], False, {}
+
+    @property
+    def defn(self):
+        return CHAR_DEFS[self.name]
+
+    def clone(self):
+        c = Character.__new__(Character)
+        c.name, c.hp, c.energy, c.aura, c.defeated = self.name, self.hp, self.energy, self.aura, self.defeated
+        c.statuses = [s.clone() for s in self.statuses]
+        c.equipment = dict(self.equipment)
+        return c
+
+
+class Player:
+    def __init__(self, chars, deck):
+        self.characters = [Character(c) for c in chars]
+        self.deck, self.hand, self.dice = list(deck), [], []
+        self.summons, self.supports, self.combat = [], [], []
+        self.active = None
+        self.ended = self.mull_done = self.roll_done = False
+        self.chosen, self.rerolls = None, 0
+
+    @property
+    def active_char(self):
+        return None if self.active is None else self.characters[self.active]
+
+    def clone(self):
+        p = Player.__new__(Player)
+        p.characters = [c.clone() for c in self.characters]
+        p.deck, p.hand, p.dice = list(self.deck), list(self.hand), list(self.dice)
+        p.summons = [u.clone() for u in self.summons]
+        p.supports = [u.clone() for u in self.supports]
+        p.combat = [s.clone() for s in self.combat]
+        p.active, p.ended, p.mull_done, p.roll_done = self.active, self.ended, self.mull_done, self.roll_done
+        p.chosen, p.rerolls = self.chosen, self.rerolls
+        return p
+
+
+class GameState:
+    def __init__(self, rng):
+        self.players, self.rng = [], rng
+        self.phase, self.round = "setup", 1          # setup roll action end over
+        self.current = self.first_player = 0
+        self.first_ender, self.pending, self.winner = None, [], None
+        self.log, self.events = [], []              # events: structured, for the UI to animate
+
+    def clone(self, keep_log=False, share_rng=False):
+        """share_rng=True is for AI search on an already-determinized copy (never the live game)."""
+        g = GameState.__new__(GameState)
+        g.players = [p.clone() for p in self.players]
+        if share_rng:
+            g.rng = self.rng
+        else:
+            g.rng = random.Random(); g.rng.setstate(self.rng.getstate())
+        g.phase, g.round, g.current, g.first_player = self.phase, self.round, self.current, self.first_player
+        g.first_ender, g.pending, g.winner = self.first_ender, list(self.pending), self.winner
+        g.log, g.events = (list(self.log) if keep_log else []), []
+        return g
+
+
+##############################################################################
+# FILE: engine/rules.py   (THE RULES: phases, actions, damage, reactions, 699 lines)
+##############################################################################
+
+"""Game rules: setup, round flow, actions, and the damage / reaction pipeline.
+
+Public API
+    new_game(chars0, deck0, chars1, deck1, seed)  -> GameState
+    legal_actions(state)                          -> list[Action]   (for state.actor)
+    apply_action(state, action)                   -> state          (mutates; clone() first for search)
+    actor(state)                                  -> player index who must act, or None
+"""
+from __future__ import annotations
+from .core import *                      # noqa: F401,F403
+from .core import (Action, Cost, IllegalAction, AURA_ELEMENTS, CRYO, HYDRO, PYRO, ELECTRO,
+                   ANEMO, GEO, OMNI, PHYSICAL, PIERCING, DICE_FACES, DICE_PER_ROUND, MAX_DICE,
+                   MAX_HAND, MAX_SUMMONS, MAX_SUPPORTS, HAND_START, DRAW_END)
+from . import dice as D
+from .model import Status, Unit, Player, GameState
+from .registry import STATUS_DEFS, SUMMON_DEFS, CARD_DEFS
+
+# pair of elements -> (reaction name, bonus damage)
+REACTIONS = {
+    frozenset((HYDRO, PYRO)): ("Vaporize", 1),
+    frozenset((CRYO, PYRO)): ("Melt", 2),
+    frozenset((PYRO, ELECTRO)): ("Overloaded", 2),
+    frozenset((CRYO, ELECTRO)): ("Superconduct", 1),
+    frozenset((HYDRO, ELECTRO)): ("Electro-Charged", 1),
+    frozenset((CRYO, HYDRO)): ("Frozen", 1),
+}
+
+
+# ----------------------------------------------------------------------------- helpers
+def alive(P):
+    return [i for i, c in enumerate(P.characters) if not c.defeated]
+
+
+def has_status(ch, name):
+    return any(s.name == name for s in ch.statuses)
+
+
+def remove_status(ch, name):
+    ch.statuses = [s for s in ch.statuses if s.name != name]
+
+
+def stunned(ch):
+    return has_status(ch, "Frozen") or has_status(ch, "Petrified")
+
+
+def add_status(lst, name):
+    df = STATUS_DEFS[name]
+    for st in lst:
+        if st.name == name:
+            if df.usages is not None:
+                st.usages = df.usages
+            if df.duration is not None:
+                st.duration = df.duration
+            if df.shield:
+                st.shield = min(df.max_shield, st.shield + df.shield)
+            return st
+    st = Status(name, df.usages, df.duration, df.shield)
+    lst.append(st)
+    return st
+
+
+def _spent(st):
+    df = STATUS_DEFS[st.name]
+    if df.per_round:
+        return False
+    return (st.usages is not None and st.usages <= 0) or (df.shield > 0 and st.shield <= 0)
+
+
+def _next_alive(P, idx):
+    for k in (1, 2):
+        j = (idx + k) % 3
+        if not P.characters[j].defeated:
+            return j
+    return None
+
+
+def _foe_target(s, pi):
+    F = s.players[1 - pi]
+    if F.active is not None and not F.characters[F.active].defeated:
+        return F.active
+    a = alive(F)
+    return a[0] if a else None
+
+
+def _event(s, kind, /, **info):
+    s.events.append((kind, info))
+
+
+def _draw(s, pi, n):
+    P = s.players[pi]
+    for _ in range(n):
+        if P.deck:
+            c = P.deck.pop()
+            if len(P.hand) < MAX_HAND:
+                P.hand.append(c)
+
+
+def force_switch(s, pi):
+    P = s.players[pi]
+    if P.active is None:
+        return
+    n = _next_alive(P, P.active)
+    if n is not None:
+        P.active = n
+        _event(s, "switch", player=pi, char=n, forced=True)
+
+
+# ----------------------------------------------------------------------------- effect context
+class Ctx:
+    """What skill / card effects use to change the game. `pi` is the acting player."""
+
+    def __init__(self, state, pi, kind=None):
+        self.s, self.pi, self.kind = state, pi, kind
+
+    me = property(lambda self: self.s.players[self.pi])
+    foe = property(lambda self: self.s.players[1 - self.pi])
+
+    def damage(self, n, dtype):
+        t = _foe_target(self.s, self.pi)
+        if t is not None:
+            deal_damage(self.s, self.pi, 1 - self.pi, t, n, dtype, "skill" if self.kind else "effect", self.kind)
+
+    def piercing_others(self, n):
+        F = self.foe
+        for i, c in enumerate(F.characters):
+            if i != F.active and not c.defeated:
+                deal_damage(self.s, self.pi, 1 - self.pi, i, n, PIERCING, "effect")
+
+    def heal(self, n, idx=None):
+        P = self.me
+        idx = P.active if idx is None else idx
+        if idx is None:
+            return
+        c = P.characters[idx]
+        if not c.defeated:
+            c.hp = min(c.defn.hp, c.hp + n)
+            _event(self.s, "heal", player=self.pi, char=idx, amount=n)
+
+    def summon(self, name):
+        P, d = self.me, SUMMON_DEFS[name]
+        for u in P.summons:
+            if u.name == name:
+                u.usages = d.usages
+                return
+        if len(P.summons) >= MAX_SUMMONS:
+            P.summons.pop(0)
+        P.summons.append(Unit(name, d.usages))
+        _event(self.s, "summon", player=self.pi, name=name)
+
+    def combat_status(self, name):
+        add_status(self.me.combat, name)
+
+    def char_status(self, name, idx=None):
+        P = self.me
+        idx = P.active if idx is None else idx
+        if idx is not None and not P.characters[idx].defeated:
+            add_status(P.characters[idx].statuses, name)
+
+    def foe_char_status(self, name):
+        t = _foe_target(self.s, self.pi)
+        if t is not None:
+            add_status(self.foe.characters[t].statuses, name)
+
+    def force_switch_foe(self):
+        force_switch(self.s, 1 - self.pi)
+
+    def draw(self, n):
+        _draw(self.s, self.pi, n)
+
+    def gain_energy(self, n):
+        ch = self.me.active_char
+        if ch:
+            ch.energy = min(ch.defn.max_energy, ch.energy + n)
+
+    def heal_most_injured(self, n):
+        P = self.me
+        hurt = [(c.defn.hp - c.hp, i) for i, c in enumerate(P.characters) if not c.defeated and c.hp < c.defn.hp]
+        if hurt:
+            self.heal(n, max(hurt)[1])
+
+    def gain_dice(self, n, die):
+        P = self.me
+        for _ in range(n):
+            if len(P.dice) < MAX_DICE:
+                P.dice.append(die)
+
+
+# ----------------------------------------------------------------------------- damage pipeline
+def _each_status(P, ch):
+    return list(ch.statuses if ch else []) + list(P.combat)
+
+
+def _outgoing(s, sp, d):
+    P = s.players[sp]
+    for st in _each_status(P, P.active_char):
+        df = STATUS_DEFS.get(st.name)
+        if df and df.outgoing:
+            df.outgoing(s, sp, st, d)
+
+
+def _after_skill(s, sp, kind):
+    P = s.players[sp]
+    for st in _each_status(P, P.active_char):
+        df = STATUS_DEFS.get(st.name)
+        if df and df.after_skill:
+            df.after_skill(s, sp, st, kind)
+    for c in P.characters:
+        c.statuses = [x for x in c.statuses if not _spent(x)]
+    P.combat = [x for x in P.combat if not _spent(x)]
+
+
+def deal_damage(s, sp, tp, ti, amount, dtype, source="skill", kind=None):
+    """1) outgoing modifiers  2) frozen bonus  3) aura / reaction  4) shields  5) HP  6) side effects."""
+    P = s.players[tp]
+    tgt = P.characters[ti]
+    if tgt.defeated:
+        return
+    if source == "skill":
+        d = {"amount": amount, "dtype": dtype, "kind": kind}
+        _outgoing(s, sp, d)
+        amount, dtype = d["amount"], d["dtype"]
+
+    reaction = swirled = None
+    if dtype in (PHYSICAL, PYRO) and has_status(tgt, "Frozen"):
+        amount += 2
+        remove_status(tgt, "Frozen")
+    if dtype in AURA_ELEMENTS:
+        if tgt.aura is None:
+            tgt.aura = dtype
+        elif tgt.aura != dtype:
+            reaction, bonus = REACTIONS[frozenset((tgt.aura, dtype))]
+            amount += bonus
+            tgt.aura = None
+    elif dtype in (ANEMO, GEO) and tgt.aura:
+        swirled, tgt.aura = tgt.aura, None
+        reaction = "Swirl" if dtype == ANEMO else "Crystallize"
+        if dtype == GEO:
+            amount += 1
+
+    if dtype != PIERCING and ti == P.active:
+        for st in list(P.combat):
+            df = STATUS_DEFS[st.name]
+            if df.reduce and st.usages and amount >= df.reduce_min:
+                amount = max(0, amount - df.reduce)
+                st.usages -= 1
+        for st in P.combat:
+            if st.shield > 0 and amount > 0:
+                absorbed = min(st.shield, amount)
+                st.shield -= absorbed
+                amount -= absorbed
+        P.combat = [x for x in P.combat if not _spent(x)]
+
+    tgt.hp = max(0, tgt.hp - amount)
+    _event(s, "damage", player=tp, char=ti, amount=amount, dtype=dtype, reaction=reaction, source=source)
+    s.log.append(f"P{sp}->P{tp}.{tgt.name}: {amount} {dtype}" + (f" [{reaction}]" if reaction else ""))
+    if tgt.hp == 0:
+        _defeat(s, tp, ti, sp)
+
+    if reaction == "Overloaded" and not tgt.defeated and P.active == ti:
+        force_switch(s, tp)
+    elif reaction in ("Superconduct", "Electro-Charged"):
+        for j, c in enumerate(P.characters):
+            if j != ti and not c.defeated:
+                deal_damage(s, sp, tp, j, 1, PIERCING, "reaction")
+    elif reaction == "Frozen" and not tgt.defeated:
+        add_status(tgt.statuses, "Frozen")
+    elif reaction == "Swirl":
+        for j, c in enumerate(P.characters):
+            if j != ti and not c.defeated:
+                deal_damage(s, sp, tp, j, 1, swirled, "swirl")
+    elif reaction == "Crystallize":
+        add_status(s.players[sp].combat, "Crystallize Shield")
+
+
+def _defeat(s, pi, ci, killer=None):
+    P = s.players[pi]
+    c = P.characters[ci]
+    c.hp, c.energy, c.aura, c.statuses, c.defeated, c.equipment = 0, 0, None, [], True, {}
+    s.log.append(f"P{pi}.{c.name} defeated")
+    _event(s, "defeat", player=pi, char=ci)
+    if P.active == ci:
+        P.active = None
+        if alive(P) and pi not in s.pending:
+            s.pending.append(pi)
+    _check_win(s)
+    if killer is not None and s.winner is None:
+        A = s.players[killer]
+        for st in _each_status(A, A.active_char):
+            df = STATUS_DEFS.get(st.name)
+            if df and df.on_kill:
+                df.on_kill(s, killer, st)
+
+
+def _check_win(s):
+    lost = [all(c.defeated for c in P.characters) for P in s.players]
+    if lost[0] and lost[1]:
+        s.winner = -1
+    elif lost[0]:
+        s.winner = 1
+    elif lost[1]:
+        s.winner = 0
+    if s.winner is not None:
+        s.phase = "over"
+        s.pending = []
+
+
+# ----------------------------------------------------------------------------- game flow
+def new_game(chars0, deck0, chars1, deck1, seed=None):
+    import content  # noqa: F401  (registers characters / cards / statuses)
+    import random
+    s = GameState(random.Random(seed))
+    s.players = [Player(chars0, deck0), Player(chars1, deck1)]
+    for p in range(2):
+        s.rng.shuffle(s.players[p].deck)
+        _draw(s, p, HAND_START)
+    s.first_player = s.rng.randrange(2)
+    s.current = s.first_player
+    return s
+
+
+def actor(s):
+    if s.phase == "over":
+        return None
+    if s.pending:
+        return s.pending[0]
+    order = (s.first_player, 1 - s.first_player)
+    if s.phase == "setup":
+        for p in order:
+            if not s.players[p].mull_done:
+                return p
+        for p in order:
+            if s.players[p].chosen is None:
+                return p
+    if s.phase == "roll":
+        for p in order:
+            if not s.players[p].roll_done:
+                return p
+    if s.phase == "action":
+        return s.current
+    return None
+
+
+def _begin_round(s, first=False):
+    if not first:
+        s.round += 1
+        s.first_player = s.first_ender
+    s.first_ender, s.phase = None, "roll"
+    for P in s.players:
+        P.dice, P.rerolls, P.roll_done, P.ended = D.roll(s.rng, DICE_PER_ROUND), 1, False, False
+    s.log.append(f"-- Round {s.round} --")
+    _event(s, "round", number=s.round)
+
+
+def _start_action(s):
+    s.phase, s.current = "action", s.first_player
+    _event(s, "phase", name="action", first=s.first_player)
+    for p in (s.first_player, 1 - s.first_player):
+        P = s.players[p]
+        for u in list(P.supports):
+            cd = CARD_DEFS[u.name]
+            if cd.action_start:
+                cd.action_start(Ctx(s, p))
+                u.usages -= 1
+        P.supports = [u for u in P.supports if u.usages is None or u.usages > 0]
+
+
+def _tick(lst):
+    out = []
+    for st in lst:
+        if st.duration is not None:
+            st.duration -= 1
+            if st.duration <= 0:
+                continue
+        out.append(st)
+    return out
+
+
+def _reset_round(lst):
+    for st in lst:
+        df = STATUS_DEFS[st.name]
+        if df.per_round:
+            st.usages = df.per_round
+
+
+def _end_phase(s):
+    s.phase = "end"
+    _event(s, "phase", name="end", first=s.first_ender)
+    order = (s.first_ender, 1 - s.first_ender)
+    for p in order:
+        P = s.players[p]
+        for u in list(P.summons):
+            d = SUMMON_DEFS[u.name]
+            t = _foe_target(s, p)
+            if t is not None:
+                deal_damage(s, p, 1 - p, t, d.damage, d.element, "summon")
+            u.usages -= 1
+        P.summons = [u for u in P.summons if u.usages > 0]
+        for u in list(P.supports):
+            cd = CARD_DEFS[u.name]
+            if cd.end_phase:
+                cd.end_phase(Ctx(s, p))
+                u.usages -= 1
+        P.supports = [u for u in P.supports if u.usages is None or u.usages > 0]
+        if s.winner is not None:
+            return
+    for P in s.players:
+        for c in P.characters:
+            remove_status(c, "Frozen")
+            remove_status(c, "Petrified")
+            c.statuses = _tick(c.statuses)
+            _reset_round(c.statuses)
+        P.combat = _tick(P.combat)
+        _reset_round(P.combat)
+    for p in order:
+        _draw(s, p, DRAW_END)
+    _begin_round(s)
+
+
+def _end_turn(s, p):
+    if s.phase == "action" and not s.players[1 - p].ended:
+        s.current = 1 - p
+
+
+def _use_combat(P, name):
+    """Consume one usage of a combat status if present; True if it was there."""
+    for st in P.combat:
+        if st.name == name:
+            st.usages -= 1
+            P.combat = [x for x in P.combat if not _spent(x)]
+            return True
+    return False
+
+
+def _switch_cost(P):
+    return Cost() if any(st.name == "Changing Shifts" for st in P.combat) else Cost(unaligned=1)
+
+
+def _targets(P, cd):
+    """Legal target indices for a card (-1 = no target needed)."""
+    al = alive(P)
+    if cd.kind == "talent":
+        ch = P.active_char
+        if ch and ch.name == cd.char and not stunned(ch) and ch.energy >= ch.defn.skills[cd.skill].cost.energy:
+            return [P.active]
+        return []
+    if cd.kind == "weapon":
+        return [i for i in al if P.characters[i].defn.weapon == cd.weapon]
+    if cd.kind == "artifact" or cd.needs_char:
+        return al
+    if cd.kind == "support" and len(P.supports) >= MAX_SUPPORTS:
+        return []
+    return [-1]
+
+
+# ----------------------------------------------------------------------------- legal actions
+def legal_actions(s):
+    p = actor(s)
+    if p is None:
+        return []
+    P = s.players[p]
+    if s.pending:
+        return [Action("choose_active", p, index=i) for i in alive(P)]
+    if s.phase == "setup":
+        if not P.mull_done:
+            return [Action("mulligan", p), Action("mulligan", p, ids=tuple(range(len(P.hand))))]
+        return [Action("choose_active", p, index=i) for i in range(3)]
+    elems = tuple({P.characters[i].defn.element for i in alive(P)})
+    if s.phase == "roll":
+        acts = [Action("confirm_roll", p)]
+        junk = tuple(i for i, d in enumerate(P.dice) if d != OMNI and d not in elems)
+        if P.rerolls > 0 and junk:
+            acts.append(Action("reroll", p, ids=junk))
+        return acts
+
+    acts, ch = [], P.active_char
+    if ch and not stunned(ch):
+        for i, sk in enumerate(ch.defn.skills):
+            if sk.cost.energy and ch.energy < sk.cost.energy:
+                continue
+            pay = D.auto_pay(P.dice, sk.cost, elems)
+            if pay is not None:
+                acts.append(Action("skill", p, index=i, dice=pay))
+    pay = D.auto_pay(P.dice, _switch_cost(P), elems)
+    if pay is not None:
+        acts += [Action("switch", p, index=i, dice=pay) for i in alive(P) if i != P.active]
+    seen = set()
+    for hi, name in enumerate(P.hand):
+        if name in seen:
+            continue
+        seen.add(name)
+        cd = CARD_DEFS[name]
+        pay = D.auto_pay(P.dice, cd.cost, elems)
+        if pay is None:
+            continue
+        acts += [Action("card", p, index=hi, target=t, dice=pay) for t in _targets(P, cd)]
+    if ch:
+        faces = set()
+        for di, d in enumerate(P.dice):
+            if d not in (OMNI, ch.defn.element) and d not in faces:
+                faces.add(d)
+                seen = set()
+                for hi, name in enumerate(P.hand):
+                    if name not in seen:
+                        seen.add(name)
+                        acts.append(Action("tune", p, index=hi, target=di))
+    acts.append(Action("end_round", p))
+    return acts
+
+
+# ----------------------------------------------------------------------------- apply actions
+def _pay(P, cost, idx):
+    if not D.payment_ok(P.dice, cost, tuple(idx)):
+        raise IllegalAction("invalid dice payment")
+    for i in sorted(idx, reverse=True):
+        del P.dice[i]
+
+
+def _mulligan(s, a):
+    P = s.players[a.player]
+    ids = sorted(set(a.ids))
+    if P.mull_done or any(not 0 <= i < len(P.hand) for i in ids):
+        raise IllegalAction("bad mulligan")
+    out = [P.hand[i] for i in ids]
+    P.hand = [c for i, c in enumerate(P.hand) if i not in ids]
+    P.deck.extend(out)
+    s.rng.shuffle(P.deck)
+    _draw(s, a.player, len(out))
+    P.mull_done = True
+
+
+def _choose_active(s, a):
+    P = s.players[a.player]
+    if not 0 <= a.index < 3 or P.characters[a.index].defeated:
+        raise IllegalAction("bad character")
+    if s.pending:
+        P.active = a.index
+        s.pending.remove(a.player)
+        _event(s, "switch", player=a.player, char=a.index, forced=True)
+        return
+    if not P.mull_done:
+        raise IllegalAction("mulligan first")
+    P.chosen = a.index
+    if all(p.chosen is not None for p in s.players):
+        for p in s.players:
+            p.active = p.chosen
+        _begin_round(s, first=True)
+
+
+def _reroll(s, a):
+    P = s.players[a.player]
+    if P.rerolls <= 0 or any(not 0 <= i < len(P.dice) for i in a.ids):
+        raise IllegalAction("bad reroll")
+    ids = sorted(set(a.ids))
+    for i, d in zip(ids, D.roll(s.rng, len(ids))):
+        P.dice[i] = d
+    P.rerolls -= 1
+
+
+def _confirm_roll(s, a):
+    s.players[a.player].roll_done = True
+    if all(p.roll_done for p in s.players):
+        _start_action(s)
+
+
+def _skill(s, a):
+    P = s.players[a.player]
+    ch = P.active_char
+    if ch is None or stunned(ch) or not 0 <= a.index < len(ch.defn.skills):
+        raise IllegalAction("cannot use skill")
+    sk = ch.defn.skills[a.index]
+    if sk.cost.energy and ch.energy < sk.cost.energy:
+        raise IllegalAction("not enough energy")
+    _pay(P, sk.cost, a.dice)
+    _perform_skill(s, a.player, a.index)
+
+
+def _perform_skill(s, pi, idx):
+    """Resolve a skill (cost already paid): energy, effect, after-skill hooks, turn passes."""
+    P = s.players[pi]
+    ch = P.active_char
+    sk = ch.defn.skills[idx]
+    if sk.kind == "burst":
+        ch.energy -= sk.cost.energy
+    else:
+        ch.energy = min(ch.defn.max_energy, ch.energy + 1)
+    _event(s, "skill", player=pi, char=P.active, skill=sk.name, kind=sk.kind)
+    s.log.append(f"P{pi}.{ch.name} uses {sk.name}")
+    sk.effect(Ctx(s, pi, sk.kind))
+    _after_skill(s, pi, sk.kind)
+    _check_win(s)
+    _end_turn(s, pi)
+
+
+def _switch(s, a):
+    P = s.players[a.player]
+    if not 0 <= a.index < 3 or a.index == P.active or P.characters[a.index].defeated:
+        raise IllegalAction("bad switch target")
+    shifted = _switch_cost(P).unaligned == 0
+    _pay(P, _switch_cost(P), a.dice)
+    if shifted:
+        _use_combat(P, "Changing Shifts")
+    P.active = a.index
+    _event(s, "switch", player=a.player, char=a.index, forced=False)
+    if not _use_combat(P, "Leave It to Me!"):     # that card makes this switch a Fast Action
+        _end_turn(s, a.player)
+
+
+def _equip(ch, cd):
+    old = ch.equipment.get(cd.kind)
+    if old and CARD_DEFS[old].status:
+        remove_status(ch, CARD_DEFS[old].status)
+    ch.equipment[cd.kind] = cd.name
+    if cd.status:
+        add_status(ch.statuses, cd.status)
+
+
+def _card(s, a):
+    P = s.players[a.player]
+    if not 0 <= a.index < len(P.hand):
+        raise IllegalAction("bad card")
+    cd = CARD_DEFS[P.hand[a.index]]
+    if a.target not in _targets(P, cd):
+        raise IllegalAction("bad card target")
+    _pay(P, cd.cost, a.dice)
+    del P.hand[a.index]
+    _event(s, "card", player=a.player, name=cd.name)
+    if cd.kind == "support":
+        P.supports.append(Unit(cd.name, cd.usages))
+    elif cd.kind in ("weapon", "artifact"):
+        _equip(P.characters[a.target], cd)
+    elif cd.kind == "talent":
+        _equip(P.characters[a.target], cd)
+        _perform_skill(s, a.player, cd.skill)      # Combat Action: equip, then use the skill at once
+        return
+    else:
+        cd.play(Ctx(s, a.player), a.target)
+    _check_win(s)
+
+
+def _tune(s, a):
+    P = s.players[a.player]
+    ch = P.active_char
+    if ch is None or not 0 <= a.index < len(P.hand) or not 0 <= a.target < len(P.dice):
+        raise IllegalAction("bad tune")
+    if P.dice[a.target] in (OMNI, ch.defn.element):
+        raise IllegalAction("die already matches")
+    del P.hand[a.index]
+    P.dice[a.target] = ch.defn.element
+
+
+def _end_round(s, a):
+    P = s.players[a.player]
+    P.ended = True
+    if s.first_ender is None:
+        s.first_ender = a.player
+    _event(s, "end_round", player=a.player)
+    if s.players[1 - a.player].ended:
+        _end_phase(s)
+    else:
+        s.current = 1 - a.player
+
+
+_HANDLERS = {"mulligan": _mulligan, "choose_active": _choose_active, "reroll": _reroll,
+             "confirm_roll": _confirm_roll, "skill": _skill, "switch": _switch,
+             "card": _card, "tune": _tune, "end_round": _end_round}
+
+_PHASE_OF = {"mulligan": "setup", "reroll": "roll", "confirm_roll": "roll", "skill": "action",
+             "switch": "action", "card": "action", "tune": "action", "end_round": "action"}
+
+
+def apply_action(s, a):
+    if actor(s) != a.player:
+        raise IllegalAction("not this player's turn")
+    h = _HANDLERS.get(a.type)
+    if h is None:
+        raise IllegalAction(f"unknown action {a.type}")
+    if a.type == "choose_active":
+        if not s.pending and s.phase != "setup":
+            raise IllegalAction("nothing to choose")
+    elif s.pending or _PHASE_OF[a.type] != s.phase:
+        raise IllegalAction(f"{a.type} not allowed now")
+    s.events = []
+    h(s, a)
+    return s
+
+
+def describe(s):
+    """Plain-text board summary (handy for debugging and a CLI)."""
+    lines = [f"Round {s.round}  phase={s.phase}  to act: {actor(s)}  winner={s.winner}"]
+    for i, P in enumerate(s.players):
+        chars = ", ".join(f"{'*' if j == P.active else ''}{c.name} {c.hp}hp {c.energy}e"
+                          + (f" [{c.aura}]" if c.aura else "") + (" X" if c.defeated else "")
+                          for j, c in enumerate(P.characters))
+        lines.append(f"P{i}: {chars}")
+        lines.append(f"    dice={sorted(P.dice)} hand={len(P.hand)} deck={len(P.deck)} "
+                     f"summons={[(u.name, u.usages) for u in P.summons]} "
+                     f"status={[(x.name, x.usages, x.shield) for x in P.combat]}")
+    return "\n".join(lines)
+
+
+##############################################################################
+# FILE: engine/csp.py   (Constraint solver (used by deck auto-fill), 76 lines)
+##############################################################################
+
+"""Tiny generic constraint-satisfaction solver (backtracking + MRV + forward checking).
+Used by the deck builder (auto-fill) and reusable by the AI (e.g. AI deck generation)."""
+
+
+class SumEq:
+    """sum of the variables in `scope` must equal `target`."""
+
+    def __init__(self, scope, target):
+        self.scope, self.target = set(scope), target
+
+    def consistent(self, assign, domains):
+        lo = hi = 0
+        for v in self.scope:
+            if v in assign:
+                lo += assign[v]; hi += assign[v]
+            else:
+                lo += min(domains[v]); hi += max(domains[v])
+        return lo <= self.target <= hi
+
+
+class AllDiff:
+    """all variables in `scope` must take different values."""
+
+    def __init__(self, scope):
+        self.scope = set(scope)
+
+    def consistent(self, assign, domains):
+        vals = [assign[v] for v in self.scope if v in assign]
+        return len(vals) == len(set(vals))
+
+
+def solve(domains, constraints, var_key=None, value_key=None):
+    """domains: {var: iterable of values}. Returns {var: value} or None.
+    MRV picks the variable with the smallest domain (ties broken by var_key);
+    forward checking prunes neighbours' values that can no longer fit any constraint."""
+    domains = {v: list(d) for v, d in domains.items()}
+    assign = {}
+    var_key = var_key or (lambda v: 0)
+    value_key = value_key or (lambda x: -x)
+
+    def forward_check(var):
+        removed = []
+        for c in constraints:
+            if var not in c.scope:
+                continue
+            for u in c.scope:
+                if u in assign:
+                    continue
+                for val in list(domains[u]):
+                    assign[u] = val
+                    ok = c.consistent(assign, domains)
+                    del assign[u]
+                    if not ok:
+                        domains[u].remove(val)
+                        removed.append((u, val))
+                if not domains[u]:
+                    return removed, False
+        return removed, True
+
+    def backtrack():
+        if len(assign) == len(domains):
+            return True
+        var = min((v for v in domains if v not in assign), key=lambda v: (len(domains[v]), var_key(v)))
+        for val in sorted(domains[var], key=value_key):
+            assign[var] = val
+            if all(c.consistent(assign, domains) for c in constraints if var in c.scope):
+                removed, ok = forward_check(var)
+                if ok and backtrack():
+                    return True
+                for u, x in removed:
+                    domains[u].append(x)
+            del assign[var]
+        return False
+
+    return dict(assign) if backtrack() else None
+
+
+##############################################################################
+# FILE: engine/deck.py   (Deck rules, validation, share codes, 69 lines)
+##############################################################################
+
+"""Deck rules: validation, CSP auto-fill and share codes."""
+import base64
+import json
+from collections import Counter
+
+from . import csp
+from .registry import CARD_DEFS, CHAR_DEFS
+
+DECK_SIZE, MAX_COPIES = 30, 2
+
+
+def card_allowed(cd, chars):
+    """Can this card be in a deck with these three characters?"""
+    defs = [CHAR_DEFS[c] for c in chars]
+    if cd.kind == "talent":
+        return cd.char in chars
+    if cd.kind == "weapon":
+        return any(d.weapon == cd.weapon for d in defs)
+    if cd.resonance:
+        return sum(d.element == cd.resonance for d in defs) >= 2
+    return True
+
+
+def allowed_cards(chars):
+    return sorted(n for n, cd in CARD_DEFS.items() if card_allowed(cd, chars))
+
+
+def validate_deck(chars, cards):
+    """Returns a list of rule violations (empty list = legal deck)."""
+    errs = []
+    if len(chars) != 3 or len(set(chars)) != 3 or any(c not in CHAR_DEFS for c in chars):
+        return ["a deck needs exactly 3 different, known characters"]
+    if len(cards) != DECK_SIZE:
+        errs.append(f"deck has {len(cards)} cards, needs {DECK_SIZE}")
+    for name, n in Counter(cards).items():
+        if name not in CARD_DEFS:
+            errs.append(f"unknown card: {name}")
+        elif n > MAX_COPIES:
+            errs.append(f"{name}: {n} copies (max {MAX_COPIES})")
+        elif not card_allowed(CARD_DEFS[name], chars):
+            errs.append(f"{name} cannot be used with {', '.join(chars)}")
+    return errs
+
+
+def autofill(chars, partial=(), priority=None):
+    """Complete a partial deck into a legal 30-card deck with the CSP solver, preferring
+    high-priority cards. Returns a card list or None if impossible."""
+    priority = priority or {}
+    names = allowed_cards(chars)
+    have = Counter(partial)
+    if any(n not in names or c > MAX_COPIES for n, c in have.items()):
+        return None
+    domains = {n: range(have[n], MAX_COPIES + 1) for n in names}
+    sol = csp.solve(domains, [csp.SumEq(names, DECK_SIZE)],
+                    var_key=lambda n: (-priority.get(n, 0), n))
+    if sol is None:
+        return None
+    return [n for n in sorted(sol) for _ in range(sol[n])]
+
+
+def encode(chars, cards):
+    raw = json.dumps({"c": list(chars), "d": sorted(cards)}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode(code):
+    data = json.loads(base64.urlsafe_b64decode(code + "=" * (-len(code) % 4)))
+    return data["c"], data["d"]
+
+
+##############################################################################
+# FILE: content/statuses.py   (Statuses and summons, 151 lines)
+##############################################################################
+
+"""Statuses and summons. NOTE: numbers are first-pass and get verified against
+official card data in milestone 3."""
+from engine.core import PHYSICAL, PYRO, HYDRO, CRYO, ELECTRO, ANEMO, GEO, OMNI
+from engine.registry import STATUS_DEFS, SUMMON_DEFS, StatusDef, SummonDef, register
+from engine import rules
+
+
+def _status(**kw):
+    return register(STATUS_DEFS, StatusDef(**kw))
+
+
+def _summon(name, element, damage, usages):
+    return register(SUMMON_DEFS, SummonDef(name, element, damage, usages))
+
+
+# --- crowd control (handled by name in the rules)
+_status(name="Frozen")
+_status(name="Petrified")
+
+
+# --- shields and damage reduction (combat statuses)
+_status(name="Crystallize Shield", shield=1, max_shield=2)
+_status(name="Jade Shield", shield=1, max_shield=2)
+_status(name="Ice Lotus", usages=2, reduce=1)
+_status(name="Rain Sword", usages=2, reduce=1, reduce_min=3)
+_status(name="Reflection", usages=1, reduce=1)
+_status(name="Lotus Shield", shield=3, max_shield=3, duration=1)
+_status(name="Ice Shield", shield=1, max_shield=2, duration=2)
+
+
+# --- damage modifiers
+def _pyro_infusion(state, owner, st, d):
+    if d["dtype"] == PHYSICAL:
+        d["dtype"] = PYRO
+
+
+def _inspiration_field(state, owner, st, d):
+    ch = state.players[owner].active_char
+    if ch and ch.hp >= 7:
+        d["amount"] += 2
+
+
+_status(name="Pyro Infusion", duration=2, outgoing=_pyro_infusion)
+def _inspiration_heal(state, owner, st, kind):
+    ch = state.players[owner].active_char
+    if ch and ch.hp <= 6:
+        rules.Ctx(state, owner).heal(2)
+
+
+_status(name="Inspiration Field", duration=2, outgoing=_inspiration_field, after_skill=_inspiration_heal)
+
+
+def _fervent_flames(state, owner, st, d):
+    if st.usages > 0 and d["kind"]:
+        d["amount"] += 2
+        st.usages -= 1
+
+
+_status(name="Fervent Flames", usages=1, duration=2, outgoing=_fervent_flames)
+_status(name="Changing Shifts", usages=1, duration=1)      # next switch costs no dice
+_status(name="Leave It to Me!", usages=1, duration=1)      # next switch is a Fast Action
+
+
+# --- reactions to skills
+def _rainbow_bladework(state, owner, st, kind):
+    if kind == "normal" and st.usages > 0:
+        t = rules._foe_target(state, owner)
+        if t is not None:
+            rules.deal_damage(state, owner, 1 - owner, t, 1, HYDRO, "status")
+        st.usages -= 1
+
+
+_status(name="Rainbow Bladework", usages=3, after_skill=_rainbow_bladework)
+
+
+# --- summons: (name, element, end-phase damage, usages)
+_summon("Oz", ELECTRO, 1, 2)
+_summon("Icicle", CRYO, 2, 3)
+_summon("Sacred Cryo Pearl", CRYO, 1, 2)
+_summon("Large Wind Spirit", ANEMO, 2, 3)
+_summon("Stone Stele", GEO, 1, 2)
+
+
+# --- equipment statuses (weapons: +1 skill damage while the wielder is active)
+def _bonus(kind=None, n=1):
+    def outgoing(state, owner, st, d):
+        if kind is None or d["kind"] == kind:
+            d["amount"] += n
+    return outgoing
+
+
+for _w in ("Traveler's Handy Sword", "Raven Bow", "White Iron Greatsword", "White Tassel", "Magic Guide"):
+    _status(name=_w, outgoing=_bonus())
+
+
+def _earrings(state, owner, st):
+    if st.usages > 0:
+        rules.Ctx(state, owner).gain_dice(2, OMNI)
+        st.usages -= 1
+
+
+_status(name="Gambler's Earrings", usages=1, per_round=1, on_kill=_earrings)
+
+
+# --- talent statuses. Names are real; effects are simplified placeholders except Fischl's.
+def _electro_infusion(state, owner, st, d):
+    if d["dtype"] == PHYSICAL:
+        d["dtype"] = ELECTRO
+
+
+def _stellar_predator(state, owner, st, kind):
+    P = state.players[owner]
+    if kind == "normal" and st.usages > 0 and any(u.name == "Oz" for u in P.summons):
+        t = rules._foe_target(state, owner)
+        if t is not None:
+            rules.deal_damage(state, owner, 1 - owner, t, 2, ELECTRO, "status")
+        st.usages -= 1
+
+
+def _cold_blooded(state, owner, st, kind):
+    if kind == "skill":
+        rules.Ctx(state, owner).heal(2)
+
+
+_status(name="Thundering Penance", outgoing=_electro_infusion)
+_status(name="Stellar Predator", usages=1, per_round=1, after_skill=_stellar_predator)
+_status(name="Flowing Flame", outgoing=_bonus("skill"))
+_status(name="Grand Expectation", outgoing=_bonus("burst"))
+_status(name="Cold-Blooded Strike", after_skill=_cold_blooded)
+_status(name="Undivided Heart", outgoing=_bonus("skill"))
+_status(name="The Scent Remained", outgoing=_bonus("normal"))
+_status(name="Prophecy of Submersion", outgoing=_bonus("burst"))
+_status(name="Chaotic Entropy", outgoing=_bonus("skill"))
+_status(name="Dominance of Earth", outgoing=_bonus("skill"))
+
+
+STATUS_TEXT = {
+    "Frozen": "Cannot act. Takes +2 from Physical or Pyro (which thaws it).", "Petrified": "Cannot use skills this round.",
+    "Crystallize Shield": "Shield: absorbs 1 damage (max 2).", "Jade Shield": "Shield: absorbs 1 damage (max 2).",
+    "Ice Lotus": "Reduces damage taken by 1. (2 uses)", "Rain Sword": "Reduces damage of 3 or more by 1. (2 uses)",
+    "Reflection": "Reduces damage taken by 1. (1 use)", "Lotus Shield": "Shield: absorbs 3 damage this round.",
+    "Ice Shield": "Shield: absorbs 1 damage for 2 rounds.", "Pyro Infusion": "Physical damage becomes Pyro. (2 rounds)",
+    "Inspiration Field": "+2 damage if attacker has 7+ HP; heals 2 at 6 HP or less. (2 rounds)",
+    "Rainbow Bladework": "After a Normal Attack: 1 Hydro damage. (3 uses)", "Fervent Flames": "Next skill deals +2 damage.",
+    "Changing Shifts": "Next switch costs no dice.", "Leave It to Me!": "Next switch is a Fast Action.",
+}
+for _n, _t in STATUS_TEXT.items():
+    STATUS_DEFS[_n].text = _t
+for _n in ("Traveler's Handy Sword", "Raven Bow", "White Iron Greatsword", "White Tassel", "Magic Guide"):
+    STATUS_DEFS[_n].text = "+1 damage on this character's skills."
+
+
+##############################################################################
+# FILE: content/characters.py   (The 10 characters and their skills, 110 lines)
+##############################################################################
+
+"""The 10 launch characters. Skill numbers are first-pass (verified in milestone 3)."""
+from engine.core import (Cost, PHYSICAL, CRYO, HYDRO, PYRO, ELECTRO, ANEMO, GEO)
+from engine.registry import CHAR_DEFS, CharDef, SkillDef, register
+
+
+def _seq(*steps):
+    def run(ctx):
+        for st in steps:
+            st(ctx)
+    return run
+
+
+dmg = lambda n, t: (lambda c: c.damage(n, t))
+pierce = lambda n: (lambda c: c.piercing_others(n))
+summon = lambda nm: (lambda c: c.summon(nm))
+combat = lambda nm: (lambda c: c.combat_status(nm))
+self_status = lambda nm: (lambda c: c.char_status(nm))
+foe_status = lambda nm: (lambda c: c.foe_char_status(nm))
+swap_foe = lambda c: c.force_switch_foe()
+
+
+class _Recorder:
+    """Stands in for the effect context to turn an effect into readable text."""
+
+    def __init__(self):
+        self.parts = []
+
+    def damage(self, n, dtype):
+        self.parts.append(f"Deal {n} {dtype} DMG.")
+
+    def piercing_others(self, n):
+        self.parts.append(f"{n} Piercing DMG to the other enemy characters.")
+
+    def summon(self, name):
+        self.parts.append(f"Summon {name}.")
+
+    def combat_status(self, name):
+        self.parts.append(f"Create {name}.")
+
+    def char_status(self, name, idx=None):
+        self.parts.append(f"Gain {name}.")
+
+    def foe_char_status(self, name):
+        self.parts.append(f"Target gains {name}.")
+
+    def force_switch_foe(self):
+        self.parts.append("The enemy must switch character.")
+
+
+def describe(effect):
+    r = _Recorder()
+    effect(r)
+    return " ".join(r.parts)
+
+
+def char(name, element, weapon, max_energy, normal, skill, burst, normal_type=PHYSICAL, normal_dmg=2):
+    """normal / skill / burst = (skill name, cost, effect steps...)"""
+    def mk(kind, spec):
+        nm, cost, *steps = spec
+        run = _seq(*steps)
+        return SkillDef(nm, kind, cost, run, describe(run))
+    skills = (mk("normal", (normal[0], Cost(element, 1, 2), dmg(normal_dmg, normal_type))),
+              mk("skill", skill), mk("burst", burst))
+    return register(CHAR_DEFS, CharDef(name, element, weapon, max_energy, skills))
+
+
+char("Keqing", ELECTRO, "Sword", 3, ("Yunlai Swordsmanship",),
+     ("Stellar Restoration", Cost(ELECTRO, 3), dmg(3, ELECTRO)),
+     ("Starward Sword", Cost(ELECTRO, 3, 0, 3), dmg(4, ELECTRO), pierce(3)))
+
+char("Fischl", ELECTRO, "Bow", 3, ("Bolts of Downfall",),
+     ("Nightrider", Cost(ELECTRO, 3), dmg(1, ELECTRO), summon("Oz")),
+     ("Midnight Phantasmagoria", Cost(ELECTRO, 3, 0, 3), dmg(4, ELECTRO), pierce(2)))
+
+char("Diluc", PYRO, "Claymore", 3, ("Tempered Sword",),
+     ("Searing Onslaught", Cost(PYRO, 3), dmg(3, PYRO)),
+     ("Dawn", Cost(PYRO, 4, 0, 3), dmg(8, PYRO), self_status("Pyro Infusion")))
+
+char("Bennett", PYRO, "Sword", 2, ("Strike of Fortune",),
+     ("Passion Overload", Cost(PYRO, 3), dmg(3, PYRO)),
+     ("Fantastic Voyage", Cost(PYRO, 4, 0, 2), dmg(2, PYRO), combat("Inspiration Field")))
+
+char("Kaeya", CRYO, "Sword", 2, ("Ceremonial Bladework",),
+     ("Frostgnaw", Cost(CRYO, 3), dmg(3, CRYO)),
+     ("Glacial Waltz", Cost(CRYO, 3, 0, 2), dmg(1, CRYO), summon("Icicle")))
+
+char("Ganyu", CRYO, "Bow", 2, ("Liutian Archery",),
+     ("Trail of the Qilin", Cost(CRYO, 3), dmg(1, CRYO), combat("Ice Lotus")),
+     ("Celestial Shower", Cost(CRYO, 3, 0, 2), dmg(2, CRYO), pierce(2), summon("Sacred Cryo Pearl")))
+
+char("Xingqiu", HYDRO, "Sword", 2, ("Guhua Style",),
+     ("Fatal Rainscreen", Cost(HYDRO, 3), dmg(2, HYDRO), combat("Rain Sword")),
+     ("Raincutter", Cost(HYDRO, 3, 0, 2), dmg(1, HYDRO), combat("Rainbow Bladework")))
+
+char("Mona", HYDRO, "Catalyst", 3, ("Ripple of Fate",),
+     ("Mirror Reflection of Doom", Cost(HYDRO, 3), dmg(1, HYDRO), combat("Reflection")),
+     ("Stellaris Phantasm", Cost(HYDRO, 3, 0, 3), dmg(4, HYDRO)),
+     normal_type=HYDRO, normal_dmg=1)
+
+char("Sucrose", ANEMO, "Catalyst", 2, ("Wind Spirit Creation",),
+     ("Astable Anemohypostasis", Cost(ANEMO, 3), dmg(3, ANEMO), swap_foe),
+     ("Forbidden Creation", Cost(ANEMO, 3, 0, 2), dmg(1, ANEMO), summon("Large Wind Spirit")),
+     normal_type=ANEMO, normal_dmg=1)
+
+char("Zhongli", GEO, "Polearm", 3, ("Rain of Stone",),
+     ("Dominus Lapidis", Cost(GEO, 3), dmg(1, GEO), summon("Stone Stele"), combat("Jade Shield")),
+     ("Planet Befall", Cost(GEO, 3, 0, 3), dmg(3, GEO), foe_status("Petrified")))
+
+ROSTER = list(CHAR_DEFS)
+
+
+##############################################################################
+# FILE: content/cards.py   (The 29 action cards, 98 lines)
+##############################################################################
+
+"""Action cards. Names are real; effect numbers marked 'approx' are placeholders until
+checked against official data."""
+from engine.core import Cost, OMNI, PYRO, HYDRO, CRYO, ELECTRO
+from engine.registry import CARD_DEFS, CardDef, register
+from engine.rules import Ctx  # noqa: F401  (type hint only)
+
+
+def card(name, kind, cost, **kw):
+    return register(CARD_DEFS, CardDef(name, kind, cost, **kw))
+
+
+# ---- events (universal)
+card("Sweet Madame", "event", Cost(), needs_char=True, play=lambda c, t: c.heal(1, t))
+card("Mondstadt Hash Browns", "event", Cost(unaligned=1), needs_char=True, play=lambda c, t: c.heal(2, t))
+card("Strategize", "event", Cost(unaligned=1), play=lambda c, t: c.draw(2))
+card("Changing Shifts", "event", Cost(), play=lambda c, t: c.combat_status("Changing Shifts"))
+card("Leave It to Me!", "event", Cost(), play=lambda c, t: c.combat_status("Leave It to Me!"))
+card("Lotus Flower Crisp", "event", Cost(unaligned=1), play=lambda c, t: c.combat_status("Lotus Shield"))  # approx
+card("Starsigns", "event", Cost(unaligned=2), play=lambda c, t: c.gain_energy(1))                          # approx
+
+# ---- supports
+card("Paimon", "support", Cost(unaligned=3), usages=2, action_start=lambda c: c.gain_dice(2, OMNI))
+card("Liyue Harbor Wharf", "support", Cost(unaligned=2), usages=2, end_phase=lambda c: c.draw(2))
+card("Wangshu Inn", "support", Cost(unaligned=2), usages=2, end_phase=lambda c: c.heal_most_injured(2))
+
+# ---- weapons (one basic weapon per weapon type) and an artifact
+for _name, _type in (("Traveler's Handy Sword", "Sword"), ("Raven Bow", "Bow"),
+                     ("White Iron Greatsword", "Claymore"), ("White Tassel", "Polearm"),
+                     ("Magic Guide", "Catalyst")):
+    card(_name, "weapon", Cost(unaligned=2), weapon=_type, status=_name)
+card("Gambler's Earrings", "artifact", Cost(unaligned=2), status="Gambler's Earrings")
+
+# ---- elemental resonance (needs 2 characters of that element) — approx effects
+card("Elemental Resonance: Woven Thunder", "event", Cost(ELECTRO, 1), resonance=ELECTRO,
+     play=lambda c, t: c.gain_energy(1))
+card("Elemental Resonance: Fervent Flames", "event", Cost(PYRO, 1), resonance=PYRO,
+     play=lambda c, t: c.combat_status("Fervent Flames"))
+card("Elemental Resonance: Soothing Waters", "event", Cost(HYDRO, 1), resonance=HYDRO,
+     play=lambda c, t: c.heal(2))
+card("Elemental Resonance: Shattering Ice", "event", Cost(CRYO, 1), resonance=CRYO,
+     play=lambda c, t: c.combat_status("Ice Shield"))
+
+# ---- talents: (card, character, skill index used when equipped). Cost = that skill's cost.
+for _card, _char, _skill, _cost in (
+        ("Thundering Penance", "Keqing", 1, Cost(ELECTRO, 3)),
+        ("Stellar Predator", "Fischl", 1, Cost(ELECTRO, 3)),
+        ("Flowing Flame", "Diluc", 1, Cost(PYRO, 3)),
+        ("Grand Expectation", "Bennett", 1, Cost(PYRO, 4)),
+        ("Cold-Blooded Strike", "Kaeya", 1, Cost(CRYO, 3)),
+        ("Undivided Heart", "Ganyu", 1, Cost(CRYO, 3)),
+        ("The Scent Remained", "Xingqiu", 1, Cost(HYDRO, 3)),
+        ("Prophecy of Submersion", "Mona", 1, Cost(HYDRO, 3)),
+        ("Chaotic Entropy", "Sucrose", 1, Cost("Anemo", 3)),
+        ("Dominance of Earth", "Zhongli", 1, Cost("Geo", 3))):
+    card(_card, "talent", _cost, char=_char, skill=_skill, status=_card)
+
+
+CARD_TEXT = {
+    "Sweet Madame": "Heal a character for 1.",
+    "Mondstadt Hash Browns": "Heal a character for 2.",
+    "Strategize": "Draw 2 cards.",
+    "Changing Shifts": "Your next character switch costs no dice.",
+    "Leave It to Me!": "Your next switch is a Fast Action.",
+    "Lotus Flower Crisp": "Create a 3-point shield this round.",
+    "Starsigns": "Your active character gains 1 Energy.",
+    "Paimon": "Start of each Action Phase: gain 2 Omni dice. (2 uses)",
+    "Liyue Harbor Wharf": "End Phase: draw 2 cards. (2 uses)",
+    "Wangshu Inn": "End Phase: heal your most injured character for 2. (2 uses)",
+    "Traveler's Handy Sword": "A Sword user deals +1 damage with skills.",
+    "Raven Bow": "A Bow user deals +1 damage with skills.",
+    "White Iron Greatsword": "A Claymore user deals +1 damage with skills.",
+    "White Tassel": "A Polearm user deals +1 damage with skills.",
+    "Magic Guide": "A Catalyst user deals +1 damage with skills.",
+    "Gambler's Earrings": "When you defeat an enemy character: gain 2 Omni dice. (once per round)",
+    "Elemental Resonance: Woven Thunder": "Your active character gains 1 Energy. (needs 2 Electro characters)",
+    "Elemental Resonance: Fervent Flames": "Your next skill deals +2 damage. (needs 2 Pyro characters)",
+    "Elemental Resonance: Soothing Waters": "Heal your active character for 2. (needs 2 Hydro characters)",
+    "Elemental Resonance: Shattering Ice": "Create a 1-point shield for 2 rounds. (needs 2 Cryo characters)",
+    "Thundering Penance": "Equip, then use Stellar Restoration. Physical damage becomes Electro.",
+    "Stellar Predator": "Equip, then use Nightrider. After a Normal Attack with Oz out: 2 Electro damage.",
+    "Flowing Flame": "Equip, then use Searing Onslaught. Skill deals +1 damage.",
+    "Grand Expectation": "Equip, then use Passion Overload. Burst deals +1 damage.",
+    "Cold-Blooded Strike": "Equip, then use Frostgnaw. After the skill, heal 2.",
+    "Undivided Heart": "Equip, then use Trail of the Qilin. Skill deals +1 damage.",
+    "The Scent Remained": "Equip, then use Fatal Rainscreen. Normal Attack deals +1 damage.",
+    "Prophecy of Submersion": "Equip, then use Mirror Reflection of Doom. Burst deals +1 damage.",
+    "Chaotic Entropy": "Equip, then use Astable Anemohypostasis. Skill deals +1 damage.",
+    "Dominance of Earth": "Equip, then use Dominus Lapidis. Skill deals +1 damage.",
+}
+for _n, _t in CARD_TEXT.items():
+    CARD_DEFS[_n].text = _t
+
+
+def starter_deck():
+    """30 arbitrary cards for engine tests (not a legal deck; see content.presets)."""
+    return (["Sweet Madame"] * 8 + ["Mondstadt Hash Browns"] * 8 +
+            ["Strategize"] * 8 + ["Paimon"] * 6)
+
+
+##############################################################################
+# FILE: content/presets.py   (Preset decks, 38 lines)
+##############################################################################
+
+"""Preset decks, built by the CSP auto-fill from a priority list (so they are always legal)."""
+from engine import deck
+
+BASE = {"Paimon": 5, "Strategize": 4, "Sweet Madame": 3, "Changing Shifts": 3, "Mondstadt Hash Browns": 2,
+        "Liyue Harbor Wharf": 2, "Wangshu Inn": 2, "Gambler's Earrings": 1}
+TALENT_BOOST, WEAPON_BOOST, RESONANCE_BOOST = 10, 6, 7
+
+PRESETS = {
+    "Electro-Charged": ["Keqing", "Fischl", "Xingqiu"],
+    "Melt Burst": ["Diluc", "Bennett", "Kaeya"],
+    "Swirl Control": ["Sucrose", "Mona", "Zhongli"],
+    "Frost and Stone": ["Ganyu", "Kaeya", "Zhongli"],
+    "Vaporize Overload": ["Diluc", "Xingqiu", "Fischl"],
+    "Freeze Superconduct": ["Ganyu", "Mona", "Keqing"],
+}
+
+
+def priority():
+    """Card priorities used by CSP auto-fill (talents > resonance > weapons > staples)."""
+    from engine.registry import CARD_DEFS
+    pr = dict(BASE)
+    for n, cd in CARD_DEFS.items():
+        if cd.kind == "talent":
+            pr[n] = TALENT_BOOST
+        elif cd.kind == "weapon":
+            pr[n] = WEAPON_BOOST
+        elif cd.resonance:
+            pr[n] = RESONANCE_BOOST
+    return pr
+
+
+def build(chars):
+    return deck.autofill(chars, priority=priority())
+
+
+def preset_decks():
+    return {name: (chars, build(chars)) for name, chars in PRESETS.items()}
+
+
+##############################################################################
+# FILE: content/__init__.py   (Content loader, 6 lines)
+##############################################################################
+
+"""Importing this package registers all characters, statuses, summons and cards."""
+from . import statuses, characters, cards  # noqa: F401
+from .cards import starter_deck  # noqa: F401
+from .presets import preset_decks  # noqa: F401
+from .characters import ROSTER  # noqa: F401
+
+
+-- end of game logic: 1491 lines in 12 files --
