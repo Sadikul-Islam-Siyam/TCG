@@ -1,0 +1,203 @@
+{
+  "characters": [
+    {
+      "name": "Pyro Vanguard",
+      "element": "Pyro",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Flame Strike",
+          "kind": "normal",
+          "cost": { "element": "Pyro", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Physical" }
+          ]
+        },
+        {
+          "name": "Blaze Slash",
+          "kind": "skill",
+          "cost": { "element": "Pyro", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 3, "element": "Pyro" }
+          ]
+        },
+        {
+          "name": "Crimson Nova",
+          "kind": "burst",
+          "cost": { "element": "Pyro", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 6, "element": "Pyro" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Electro Ranger",
+      "element": "Electro",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Volt Shot",
+          "kind": "normal",
+          "cost": { "element": "Electro", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Physical" }
+          ]
+        },
+        {
+          "name": "Shock Arrow",
+          "kind": "skill",
+          "cost": { "element": "Electro", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 3, "element": "Electro" }
+          ]
+        },
+        {
+          "name": "Storm Volley",
+          "kind": "burst",
+          "cost": { "element": "Electro", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 4, "element": "Electro" },
+            { "op": "piercing_others", "amount": 2 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cryo Knight",
+      "element": "Cryo",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Frost Cut",
+          "kind": "normal",
+          "cost": { "element": "Cryo", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Physical" }
+          ]
+        },
+        {
+          "name": "Glacial Edge",
+          "kind": "skill",
+          "cost": { "element": "Cryo", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 3, "element": "Cryo" }
+          ]
+        },
+        {
+          "name": "Permafrost Burst",
+          "kind": "burst",
+          "cost": { "element": "Cryo", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 5, "element": "Cryo" },
+            { "op": "combat_status", "status": "Shield +2" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hydro Cleric",
+      "element": "Hydro",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Tide Bolt",
+          "kind": "normal",
+          "cost": { "element": "Hydro", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 1, "element": "Hydro" }
+          ]
+        },
+        {
+          "name": "Refreshing Mist",
+          "kind": "skill",
+          "cost": { "element": "Hydro", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Hydro" },
+            { "op": "heal_most_injured", "amount": 2 }
+          ]
+        },
+        {
+          "name": "Tidal Surge",
+          "kind": "burst",
+          "cost": { "element": "Hydro", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 4, "element": "Hydro" },
+            { "op": "heal_most_injured", "amount": 3 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Geo Guardian",
+      "element": "Geo",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Stone Thrust",
+          "kind": "normal",
+          "cost": { "element": "Geo", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Physical" }
+          ]
+        },
+        {
+          "name": "Aegis Slam",
+          "kind": "skill",
+          "cost": { "element": "Geo", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Geo" },
+            { "op": "combat_status", "status": "Shield +2" }
+          ]
+        },
+        {
+          "name": "Earthen Bastion",
+          "kind": "burst",
+          "cost": { "element": "Geo", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 3, "element": "Geo" },
+            { "op": "foe_char_status", "status": "Petrified" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Anemo Scout",
+      "element": "Anemo",
+      "hp": 10,
+      "max_energy": 2,
+      "skills": [
+        {
+          "name": "Gale Slash",
+          "kind": "normal",
+          "cost": { "element": "Anemo", "n": 1, "unaligned": 2, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 2, "element": "Physical" }
+          ]
+        },
+        {
+          "name": "Cyclone Kick",
+          "kind": "skill",
+          "cost": { "element": "Anemo", "n": 3, "unaligned": 0, "energy": 0 },
+          "steps": [
+            { "op": "damage", "amount": 3, "element": "Anemo" },
+            { "op": "force_switch_foe" }
+          ]
+        },
+        {
+          "name": "Tempest Strike",
+          "kind": "burst",
+          "cost": { "element": "Anemo", "n": 3, "unaligned": 0, "energy": 2 },
+          "steps": [
+            { "op": "damage", "amount": 5, "element": "Anemo" }
+          ]
+        }
+      ]
+    }
+  ]
+}

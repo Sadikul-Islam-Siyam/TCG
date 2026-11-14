@@ -11,7 +11,8 @@ const CARD_W: float = 96.0
 const CARD_H: float = 134.0
 const COLS: int = 5
 const ROWS: int = 3
-const TABS: Array[String] = ["All", "Event", "Support", "Weapon", "Artifact", "Talent", "Resonance"]
+const ROSTER_PER_PAGE: int = 10
+const TABS: Array[String] = ["All", "Heal", "Buff"]
 const COST_FILTER_ORDER: Array[int] = [-1, 0, 1, 2, 3, 4]   # -1 = any
 
 var chars: Array[String] = []
@@ -25,6 +26,7 @@ var allowed_only: bool = true
 var search_query: String = ""
 
 var page: int = 0
+var roster_page: int = 0
 var scroll: int = 0
 var modal_scroll: int = 0
 var modal: Dictionary = {}        # Empty or {"kind": "load"|"share"|"import", "code": String}
@@ -187,7 +189,7 @@ func _process(delta: float) -> void:
 # State Helpers
 # ------------------------------------------------------------------------------
 static func tab_of(cd: CardDataSystem.CardData) -> String:
-	return "Resonance" if not cd.resonance.is_empty() else cd.kind.capitalize()
+	return CardDataSystem.infer_card_role(cd).capitalize()
 
 
 static func total_cost(cd: CardDataSystem.CardData) -> int:
@@ -195,13 +197,8 @@ static func total_cost(cd: CardDataSystem.CardData) -> int:
 
 
 static func requirement(cd: CardDataSystem.CardData) -> String:
-	if cd.kind == "talent":
-		return "Talent: requires %s in the deck" % cd.char_name
-	if cd.kind == "weapon":
-		return "Weapon: requires a %s user in the deck" % cd.weapon
-	if not cd.resonance.is_empty():
-		return "Resonance: requires 2 %s characters" % cd.resonance
-	return "%s: usable in any deck" % cd.kind.capitalize()
+	var role_lbl := CardDataSystem.infer_card_role(cd).capitalize()
+	return "%s Card: usable in any deck" % role_lbl
 
 
 func cards() -> Array[String]:
@@ -311,7 +308,7 @@ func add_card(card_name: String) -> void:
 	elif int(counts.get(card_name, 0)) >= TCGDeckSystem.MAX_COPIES:
 		say("Max %d copies of a card" % TCGDeckSystem.MAX_COPIES, false)
 	elif total() >= TCGDeckSystem.DECK_SIZE:
-		say("Deck already has 30 cards", false)
+		say("Deck already has %d cards" % TCGDeckSystem.DECK_SIZE, false)
 	else:
 		counts[card_name] = int(counts.get(card_name, 0)) + 1
 		queue_redraw()
@@ -466,6 +463,12 @@ func press(key: Variant) -> void:
 				queue_redraw()
 			"next":
 				page += 1
+				queue_redraw()
+			"rprev":
+				roster_page = maxi(0, roster_page - 1)
+				queue_redraw()
+			"rnext":
+				roster_page += 1
 				queue_redraw()
 	elif typeof(key) == TYPE_ARRAY and not key.is_empty():
 		var kind: String = str(key[0])
@@ -651,27 +654,41 @@ func _draw_left(in_modal: bool, ly: Dictionary) -> void:
 			var cname: String = chars[i]
 			var pr := Rect2(r.position.x, r.position.y, r.size.x, r.size.y - 24.0)
 			_draw_mini_char(pr, cname, true, false)
-			TCGTheme.draw_text_centered(self, cname, Vector2(r.get_center().x, r.end.y - 10.0), 14, TCGTheme.TEXT, true, true)
+			var pick_sz: int = TCGTheme.fit_font_size(cname, r.size.x - 4.0, 14, 10, true)
+			TCGTheme.draw_text_centered(self, cname, Vector2(r.get_center().x, r.end.y - 10.0), pick_sz, TCGTheme.TEXT, true, true)
 			_hit_boxes.append({"rect": pr, "key": ["char", cname], "enabled": not in_modal})
 		else:
 			TCGTheme.draw_rounded_box(self, r, Color8(24, 30, 48), Color8(60, 70, 98), 8, 2)
 			TCGTheme.draw_text_centered(self, "empty", r.get_center(), 15, TCGTheme.DIM, false, true)
 
 	var roster_y: float = ty + 30.0 + slot_h + 18.0
-	TCGTheme.draw_text_pos(self, "Roster (click to add / remove)", Vector2(lx, roster_y), 15, TCGTheme.DIM, false, true)
 	var roster: PackedStringArray = CardDataSystem.roster
+	var r_pages: int = maxi(1, ceili(float(roster.size()) / float(ROSTER_PER_PAGE)))
+	roster_page = clampi(roster_page, 0, r_pages - 1)
+	TCGTheme.draw_text_pos(self, "Roster (click to add / remove)", Vector2(lx, roster_y), 15, TCGTheme.DIM, false, true)
+	if r_pages > 1:
+		var rp_r := Rect2(lx + lw - 56.0, roster_y - 2.0, 26.0, 22.0)
+		var rn_r := Rect2(lx + lw - 26.0, roster_y - 2.0, 26.0, 22.0)
+		TCGTheme.draw_plaque(self, rp_r, "<", TCGTheme.DIM, _is_hov("rprev"), in_modal or roster_page <= 0, true)
+		TCGTheme.draw_plaque(self, rn_r, ">", TCGTheme.DIM, _is_hov("rnext"), in_modal or roster_page >= r_pages - 1, true)
+		_hit_boxes.append({"rect": rp_r, "key": "rprev", "enabled": not in_modal and roster_page > 0})
+		_hit_boxes.append({"rect": rn_r, "key": "rnext", "enabled": not in_modal and roster_page < r_pages - 1})
+
+	var r_start: int = roster_page * ROSTER_PER_PAGE
+	var r_end: int = mini(roster.size(), r_start + ROSTER_PER_PAGE)
+	var visible_roster_count: int = maxi(1, r_end - r_start)
 	var r_step: float = floorf((lw + 6.0) / 5.0)
 	var rw: float = r_step - 6.0
 	var rh: float = roundf(rw * 1.18)
-	for k in range(roster.size()):
-		var cname: String = roster[k]
-		var r := Rect2(lx + float(k % 5) * r_step, roster_y + 24.0 + float(k / 5) * (rh + 8.0), rw, rh)
+	for vi in range(r_end - r_start):
+		var cname: String = roster[r_start + vi]
+		var r := Rect2(lx + float(vi % 5) * r_step, roster_y + 24.0 + float(vi / 5) * (rh + 8.0), rw, rh)
 		var picked: bool = chars.has(cname)
 		_draw_mini_char(r, cname, picked, not picked and chars.size() >= 3)
 		TCGTheme.draw_text_centered(self, cname.substr(0, 7), Vector2(r.get_center().x, r.end.y - 9.0), 12, TCGTheme.TEXT, true, true)
 		_hit_boxes.append({"rect": r, "key": ["char", cname], "enabled": not in_modal})
 
-	var comp_y: float = roster_y + 24.0 + float(ceili(float(roster.size()) / 5.0)) * (rh + 8.0) + 14.0
+	var comp_y: float = roster_y + 24.0 + float(ceili(float(visible_roster_count) / 5.0)) * (rh + 8.0) + 14.0
 	# Composition + Cost Curve
 	var kinds: Dictionary = {}
 	var curve: Dictionary = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
@@ -811,7 +828,7 @@ func _draw_right(in_modal: bool, ly: Dictionary) -> void:
 	var panel_h: float = safe.end.y - top_y - 12.0
 	var n_total: int = total()
 	TCGTheme.draw_rounded_box(self, Rect2(rx, top_y, rw, panel_h), TCGTheme.PANEL, Color(0, 0, 0, 0), 10, 0)
-	TCGTheme.draw_text_pos(self, "Deck  %d/30" % n_total, Vector2(rx + 16.0, top_y + 10.0), 22, TCGTheme.GREEN if n_total == 30 else TCGTheme.GOLD, true, true)
+	TCGTheme.draw_text_pos(self, "Deck  %d/%d" % [n_total, TCGDeckSystem.DECK_SIZE], Vector2(rx + 16.0, top_y + 10.0), 22, TCGTheme.GREEN if n_total == TCGDeckSystem.DECK_SIZE else TCGTheme.GOLD, true, true)
 
 	var rows: Array = []
 	for k in counts.keys():

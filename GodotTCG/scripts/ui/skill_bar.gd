@@ -84,9 +84,6 @@ func _process(delta: float) -> void:
 		if absf(next - _scales[i]) > 0.002:
 			_scales[i] = next
 			dirty = true
-	# Keep redraw alive smoothly when burst ready or any skill usable for subtle ember shimmer
-	if active_char != null and _is_burst_ready():
-		dirty = true
 	if dirty:
 		queue_redraw()
 
@@ -214,15 +211,3 @@ func _draw() -> void:
 			1.0
 		)
 		TCGTheme.draw_text_centered(self, str(i + 1), kp + Vector2(0, 1), 12, Color(TCGTheme.TEXT.r, TCGTheme.TEXT.g, TCGTheme.TEXT.b, alpha_dim), true, false)
-
-		# Short label below medallion
-		var lbl_col := TCGTheme.GOLD_L if (usable or is_sel) else Color(TCGTheme.DIM.r, TCGTheme.DIM.g, TCGTheme.DIM.b, 0.65)
-		TCGTheme.draw_text_centered(
-			self,
-			short_labels[i],
-			Vector2(ic.x, ic.y + med_r + 14.0),
-			14,
-			lbl_col,
-			true,
-			true
-		)

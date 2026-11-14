@@ -289,10 +289,9 @@ func _process(delta: float) -> void:
 			dirty = true
 		elif not char_state.defeated and _defeat_status_slide > 0.0:
 			_defeat_status_slide = 0.0
-		var d: CardDataSystem.CharData = char_state.get_defn()
-		var burst_ready := (d != null and not char_state.defeated and char_state.energy >= d.max_energy)
-		if burst_ready or TCGRulesEngine.has_status(char_state, "Frozen") or is_valid_target:
-			dirty = true
+		if is_valid_target:
+			if int(_anim_t * 6.0) != int((_anim_t - delta) * 6.0):
+				dirty = true
 	if dirty:
 		queue_redraw()
 
@@ -422,11 +421,12 @@ func _draw() -> void:
 	var name_bar := Rect2(r.position.x + 6, r.end.y - 46, r.size.x - 12, 38)
 	draw_rect(name_bar, Color(0.06, 0.09, 0.14, 0.90))
 	draw_line(name_bar.position, Vector2(name_bar.end.x, name_bar.position.y), TCGTheme.GOLD_D, 1.0)
+	var name_sz: int = TCGTheme.fit_font_size(char_state.name, name_bar.size.x - 10.0, 18, 11, true)
 	TCGTheme.draw_text_centered(
 		self,
 		char_state.name,
 		name_bar.get_center(),
-		18,
+		name_sz,
 		TCGTheme.GOLD_L if is_active_char else TCGTheme.TEXT,
 		true,
 		true

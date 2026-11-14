@@ -1,0 +1,10 @@
+# Godot 4 cache & local editor state (keep class cache so CLI validation works right after clone)
+.godot/*
+!.godot/global_script_class_cache.cfg
+*.translation
+export_presets.cfg
+
+# Temporary captures & OS junk
+shots/
+.DS_Store
+Thumbs.db

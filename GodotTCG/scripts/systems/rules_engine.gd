@@ -72,6 +72,13 @@ static func stunned(ch: TCGPlayerSystem.CharacterInstance) -> bool:
 	return has_status(ch, "Frozen") or has_status(ch, "Petrified")
 
 
+static func find_status(lst: Array[TCGPlayerSystem.StatusInstance], status_name: String) -> TCGPlayerSystem.StatusInstance:
+	for st in lst:
+		if st.name == status_name:
+			return st
+	return null
+
+
 static func add_status(lst: Array[TCGPlayerSystem.StatusInstance], status_name: String) -> TCGPlayerSystem.StatusInstance:
 	var df: CardDataSystem.StatusData = CardDataSystem.get_status_def(status_name)
 	if df == null:
@@ -142,85 +149,54 @@ static func _each_status(p: TCGPlayerSystem.PlayerState, ch: TCGPlayerSystem.Cha
 
 static func _apply_outgoing_rule(
 	rule_name: String,
-	s: TCGGameState,
-	owner: int,
+	_s: TCGGameState,
+	_owner: int,
 	st: TCGPlayerSystem.StatusInstance,
 	d: Dictionary
 ) -> void:
-	match rule_name:
-		"pyro_infusion":
-			if d["dtype"] == CardDataSystem.PHYSICAL:
-				d["dtype"] = CardDataSystem.PYRO
-		"electro_infusion":
-			if d["dtype"] == CardDataSystem.PHYSICAL:
-				d["dtype"] = CardDataSystem.ELECTRO
-		"inspiration_field":
-			var ch := s.players[owner].get_active_char()
-			if ch != null and ch.hp >= 7:
-				d["amount"] = int(d["amount"]) + 2
-		"fervent_flames":
-			if st.usages > 0 and not str(d["kind"]).is_empty():
-				d["amount"] = int(d["amount"]) + 2
-				st.usages -= 1
-		"bonus_any_1":
-			d["amount"] = int(d["amount"]) + 1
-		"bonus_skill_1":
-			if d["kind"] == "skill":
-				d["amount"] = int(d["amount"]) + 1
-		"bonus_burst_1":
-			if d["kind"] == "burst":
-				d["amount"] = int(d["amount"]) + 1
-		"bonus_normal_1":
-			if d["kind"] == "normal":
-				d["amount"] = int(d["amount"]) + 1
+	# Generic elemental infusion: "<element>_infusion" (e.g. "pyro_infusion")
+	if rule_name.ends_with("_infusion"):
+		if d["dtype"] == CardDataSystem.PHYSICAL:
+			var el := rule_name.trim_suffix("_infusion").capitalize()
+			if CardDataSystem.ELEMENTS.has(el):
+				d["dtype"] = el
+		return
+
+	# Parameterized damage buffs: "bonus_<any|normal|skill|burst>_<N>" or "bonus_next_<kind>_<N>"
+	if rule_name.begins_with("bonus_"):
+		var parts := rule_name.split("_")
+		var is_next: bool = (parts.size() >= 4 and parts[1] == "next")
+		var target_kind: String = parts[2] if is_next else (parts[1] if parts.size() >= 3 else "")
+		var bonus_val: int = int(parts[3]) if is_next and parts.size() >= 4 else (int(parts[2]) if parts.size() >= 3 else 0)
+		var atk_kind: String = str(d.get("kind", ""))
+		var matches_kind: bool = (not atk_kind.is_empty()) and (target_kind == "any" or target_kind == atk_kind)
+		if bonus_val != 0 and matches_kind:
+			if is_next:
+				if st.usages > 0:
+					d["amount"] = int(d["amount"]) + bonus_val
+					st.usages -= 1
+			else:
+				d["amount"] = int(d["amount"]) + bonus_val
+		return
 
 
 static func _apply_after_skill_rule(
-	rule_name: String,
-	s: TCGGameState,
-	owner: int,
-	st: TCGPlayerSystem.StatusInstance,
-	skill_kind: String
+	_rule_name: String,
+	_s: TCGGameState,
+	_owner: int,
+	_st: TCGPlayerSystem.StatusInstance,
+	_skill_kind: String
 ) -> void:
-	match rule_name:
-		"inspiration_heal":
-			var ch := s.players[owner].get_active_char()
-			if ch != null and ch.hp <= 6:
-				TCGEffectContext.new(s, owner).heal(2)
-		"rainbow_bladework":
-			if skill_kind == "normal" and st.usages > 0:
-				var t: int = foe_target(s, owner)
-				if t >= 0:
-					deal_damage(s, owner, 1 - owner, t, 1, CardDataSystem.HYDRO, "status", "")
-				st.usages -= 1
-		"stellar_predator":
-			var p := s.players[owner]
-			var has_oz: bool = false
-			for u in p.summons:
-				if u.name == "Oz":
-					has_oz = true
-					break
-			if skill_kind == "normal" and st.usages > 0 and has_oz:
-				var t: int = foe_target(s, owner)
-				if t >= 0:
-					deal_damage(s, owner, 1 - owner, t, 2, CardDataSystem.ELECTRO, "status", "")
-				st.usages -= 1
-		"cold_blooded_strike":
-			if skill_kind == "skill":
-				TCGEffectContext.new(s, owner).heal(2)
+	pass
 
 
 static func _apply_on_kill_rule(
-	rule_name: String,
-	s: TCGGameState,
-	owner: int,
-	st: TCGPlayerSystem.StatusInstance
+	_rule_name: String,
+	_s: TCGGameState,
+	_owner: int,
+	_st: TCGPlayerSystem.StatusInstance
 ) -> void:
-	match rule_name:
-		"gamblers_earrings":
-			if st.usages > 0:
-				TCGEffectContext.new(s, owner).gain_dice(2, CardDataSystem.OMNI)
-				st.usages -= 1
+	pass
 
 
 static func _outgoing(s: TCGGameState, sp: int, d: Dictionary) -> void:
@@ -546,10 +522,7 @@ static func _use_combat(p: TCGPlayerSystem.PlayerState, status_name: String) -> 
 	return false
 
 
-static func switch_cost(p: TCGPlayerSystem.PlayerState) -> CardDataSystem.CostData:
-	for st in p.combat:
-		if st.name == "Changing Shifts":
-			return CardDataSystem.CostData.new()
+static func switch_cost(_p: TCGPlayerSystem.PlayerState) -> CardDataSystem.CostData:
 	return CardDataSystem.CostData.new("", 0, 1, 0)
 
 
@@ -836,16 +809,12 @@ static func _switch(s: TCGGameState, a: TCGGameState.ActionData) -> bool:
 		return false
 	var prev_active: int = p.active
 	var cost := switch_cost(p)
-	var shifted: bool = cost.unaligned == 0
 	if not _pay(p, cost, a.dice, s, a.player):
 		return false
-	if shifted:
-		_use_combat(p, "Changing Shifts")
 	p.active = a.index
 	s.add_event("switch", {"player": a.player, "char": a.index, "forced": false})
 	s.add_game_event(GameEvent.make(GameEvent.Type.CHARACTER_SWITCHED, a.player, a.index, p.characters[a.index].name, "", 0, prev_active, a.index, "manual"))
-	if not _use_combat(p, "Leave It to Me!"):
-		TCGTurnManager.end_turn(s, a.player)
+	TCGTurnManager.end_turn(s, a.player)
 	return true
 
 

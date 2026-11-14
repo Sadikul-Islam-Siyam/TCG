@@ -137,9 +137,16 @@ func _draw() -> void:
 		TCGTheme.draw_plaque(self, r, String(b["label"]), col, _hovered_btn == i, false, false)
 
 	# Footer
+	CardDataSystem.load_all_content()
+	var footer_txt := "%d Characters · %d Action Cards · %d Preset Decks · %d-Card Decks" % [
+		CardDataSystem.char_defs.size(),
+		CardDataSystem.card_defs.size(),
+		CardDataSystem.preset_defs.size(),
+		CardDataSystem.DECK_SIZE,
+	]
 	TCGTheme.draw_text_centered(
 		self,
-		"10 Characters · 30 Action Cards · 6 Preset Decks · Full Elemental Reactions & CSP Solver",
+		footer_txt,
 		Vector2(cx, h - 28.0),
 		15,
 		TCGTheme.DIM,

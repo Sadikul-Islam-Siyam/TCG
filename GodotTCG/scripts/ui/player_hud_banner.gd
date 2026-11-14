@@ -6,7 +6,7 @@ extends Control
 
 var side: int = 0
 var player_label: String = "You"
-var active_char_name: String = "Kaeya"
+var active_char_name: String = ""
 var active_element: String = "Cryo"
 var is_acting: bool = false
 var round_ended: bool = false
@@ -56,9 +56,6 @@ func _process(delta: float) -> void:
 	var target_focus := 1.0 if (is_acting and not round_ended) else 0.0
 	if absf(_focus_t - target_focus) > 0.01:
 		_focus_t = lerpf(_focus_t, target_focus, minf(1.0, delta * 9.0))
-		dirty = true
-	if is_acting and not round_ended:
-		_pulse_t += delta
 		dirty = true
 	if dirty:
 		queue_redraw()
@@ -112,13 +109,13 @@ func _draw() -> void:
 		true
 	)
 
-	# T2.4 Turn status chip ("Acting" / "Waiting" / "Ended")
-	var status_txt := "Ended" if round_ended else ("Acting" if is_acting else "Waiting")
-	var status_col := TCGTheme.DIM if round_ended else (TCGTheme.GREEN if is_acting else Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.72))
-	var chip := Rect2(62, 34, 76, 20)
-	TCGTheme.draw_rounded_box(self, chip, Color(0.05, 0.08, 0.14, 0.85), Color(status_col.r, status_col.g, status_col.b, 0.55), 9, 1.0)
-	draw_circle(Vector2(72, 44), 3.5, status_col)
-	TCGTheme.draw_text_pos(self, status_txt, Vector2(80, 36), 12, status_col, true, false)
+	# Compact turn indicator / ended pill (decluttered)
+	if round_ended:
+		var chip := Rect2(62, 34, 68, 20)
+		TCGTheme.draw_rounded_box(self, chip, Color(0.05, 0.08, 0.14, 0.85), Color(TCGTheme.DIM.r, TCGTheme.DIM.g, TCGTheme.DIM.b, 0.55), 9, 1.0)
+		TCGTheme.draw_text_pos(self, "Ended", Vector2(72, 36), 12, TCGTheme.DIM, true, false)
+	elif is_acting:
+		draw_circle(Vector2(69, 43), 4.5, TCGTheme.GREEN)
 
 	# Compact Hand / Dice counters on the right side of the pill
 	var rx: float = pill.end.x - 12.0

@@ -1,30 +1,19 @@
 class_name TCGPresetCatalog
 extends RefCounted
 ## PresetCatalog
-## Exact data migration of `content/presets.py` (BASE priorities, boosts, and 6 preset character lineups).
+## Loads starter team presets and autofill priorities from `res://data/presets.json`.
 
 
-static func register_all(db: Node) -> void:
-	db.base_priorities = {
-		"Paimon": 5,
-		"Strategize": 4,
-		"Sweet Madame": 3,
-		"Changing Shifts": 3,
-		"Mondstadt Hash Browns": 2,
-		"Liyue Harbor Wharf": 2,
-		"Wangshu Inn": 2,
-		"Gambler's Earrings": 1,
-	}
-	db.talent_boost = 10
-	db.weapon_boost = 6
-	db.resonance_boost = 7
+static func register_all(db: CardDataSystem) -> void:
+	var data: Dictionary = db.load_json_dict("res://data/presets.json")
+	var presets: Dictionary = data.get("presets", {})
+	for pname in presets.keys():
+		var arr: Array = presets[pname]
+		var chars := PackedStringArray()
+		for ch_name in arr:
+			chars.append(str(ch_name))
+		db.preset_defs[str(pname)] = chars
 
-	db.preset_defs = {
-		"Electro-Charged": PackedStringArray(["Keqing", "Fischl", "Xingqiu"]),
-		"Melt Burst": PackedStringArray(["Diluc", "Bennett", "Kaeya"]),
-		"Swirl Control": PackedStringArray(["Sucrose", "Mona", "Zhongli"]),
-		"Frost and Stone": PackedStringArray(["Ganyu", "Kaeya", "Zhongli"]),
-		"Vaporize Overload": PackedStringArray(["Diluc", "Xingqiu", "Fischl"]),
-		"Freeze Superconduct": PackedStringArray(["Ganyu", "Mona", "Keqing"]),
-	}
-
+	var prio: Dictionary = data.get("priorities", {})
+	for cname in prio.keys():
+		db.base_priorities[str(cname)] = int(prio[cname])

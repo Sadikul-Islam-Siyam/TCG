@@ -106,6 +106,9 @@ static func _test_02_hand_syncs_from_real_match_state() -> Dictionary:
 static func _test_03_mulligan_selection_and_swap_execution() -> Dictionary:
 	var name := "03. Setup mulligan card toggle, SWAP marker, and confirm"
 	var board := _make_board(15, false)
+	var fp: int = maxi(0, board.actor())
+	board.view_player = fp
+	board.sync_from_state()
 	if not board.is_mulligan_stage():
 		board.free()
 		return {"name": name, "ok": false, "error": "Expected match to start in mulligan stage"}
@@ -121,105 +124,106 @@ static func _test_03_mulligan_selection_and_swap_execution() -> Dictionary:
 		board.free()
 		return {"name": name, "ok": false, "error": "Expected swap indices [2] after toggle off"}
 	board._confirm_mulligan()
-	var ok_flag: bool = board.game_state.players[0].mull_done
+	var ok_flag: bool = board.game_state.players[fp].mull_done
 	board.free()
 	if not ok_flag:
-		return {"name": name, "ok": false, "error": "Player 0 mull_done should be true after confirm"}
+		return {"name": name, "ok": false, "error": "Acting player mull_done should be true after confirm"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_04_untargeted_event_and_support_card_play_and_payment() -> Dictionary:
-	var name := "04. Untargeted Event & Support card selection, payment modal, and board update"
+	var name := "04. Untargeted Buff & Draw Event card selection, payment modal, and board update"
 	var board := _make_board(21, true)
 	var p := board.me()
-	p.hand.assign(["Strategize", "Paimon"])
+	p.hand.assign(["Tactical Draw", "Battle Cry"])
 	p.dice.assign(["Omni", "Omni", "Pyro", "Cryo", "Hydro"])
 	board.sync_from_state()
 
-	# Click "Strategize" once -> inspects details without opening payment yet
+	# Click "Tactical Draw" once -> inspects details without opening payment yet
 	var r1_inspect := board.select_or_play_hand_card(0, -2)
 	if not bool(r1_inspect.get("inspected", false)) or not board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "First click on Strategize should inspect without opening payment"}
-	# Click "Strategize" twice -> opens payment modal
+		return {"name": name, "ok": false, "error": "First click on Tactical Draw should inspect without opening payment"}
+	# Click "Tactical Draw" twice -> opens payment modal
 	var r1 := board.select_or_play_hand_card(0, -2)
 	if not bool(r1.get("ok", false)) or board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Second click on Strategize should open payment modal"}
+		return {"name": name, "ok": false, "error": "Second click on Tactical Draw should open payment modal"}
 
-	# Confirm payment -> Strategize draws 2 cards
+	# Confirm payment -> Tactical Draw draws 2 cards
 	var c1 := board.confirm_payment_modal()
 	if not bool(c1.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Strategize confirm failed: %s" % str(c1.get("error", ""))}
+		return {"name": name, "ok": false, "error": "Tactical Draw confirm failed: %s" % str(c1.get("error", ""))}
 
-	# Now click "Paimon" twice (1st inspect, 2nd open payment for cost 3 Same)
-	var paimon_idx: int = p.hand.find("Paimon")
-	board.select_or_play_hand_card(paimon_idx, -2)
-	var r2 := board.select_or_play_hand_card(paimon_idx, -2)
+	# Now click "Battle Cry" twice (1st inspect, 2nd open payment for cost 2 Unaligned)
+	var bc_idx: int = p.hand.find("Battle Cry")
+	board.select_or_play_hand_card(bc_idx, -2)
+	var r2 := board.select_or_play_hand_card(bc_idx, -2)
 	if not bool(r2.get("ok", false)) or board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected payment modal for Paimon"}
+		return {"name": name, "ok": false, "error": "Expected payment modal for Battle Cry"}
 	var c2 := board.confirm_payment_modal()
 	if not bool(c2.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Paimon confirm failed"}
-	var ok_paimon: bool = p.supports.size() == 1 and p.supports[0].name == "Paimon"
+		return {"name": name, "ok": false, "error": "Battle Cry confirm failed"}
+	var ok_buff: bool = false
+	for st in p.combat:
+		if st.name == "Attack +1":
+			ok_buff = true
 	board.free()
-	if not ok_paimon:
-		return {"name": name, "ok": false, "error": "Support zone did not update with Paimon"}
+	if not ok_buff:
+		return {"name": name, "ok": false, "error": "Combat status did not update with Attack +1"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_05_zero_cost_card_executes_immediately() -> Dictionary:
-	var name := "05. Zero-cost card ('Changing Shifts' / 'Sweet Madame') executes immediately without modal"
+	var name := "05. Zero-cost card ('Quick Rally') executes immediately without modal"
 	var board := _make_board(25, true)
 	var p := board.me()
-	p.hand.assign(["Changing Shifts"])
+	p.hand.assign(["Quick Rally"])
 	p.dice.assign(["Geo"])
+	var deck_before: int = p.deck.size()
 	board.sync_from_state()
 
-	# Click 1 inspects Changing Shifts; Click 2 executes 0-cost card immediately without payment modal
+	# Click 1 inspects Quick Rally; Click 2 executes 0-cost card immediately without payment modal
 	var r_insp := board.select_or_play_hand_card(0, -2)
 	if not bool(r_insp.get("inspected", false)) or p.hand.size() != 1:
 		board.free()
 		return {"name": name, "ok": false, "error": "First click should inspect 0-cost card without playing"}
 	var r := board.select_or_play_hand_card(0, -2)
-	if not bool(r.get("ok", false)) or not board.pay_pending.is_empty():
-		board.free()
-		return {"name": name, "ok": false, "error": "0-cost card should execute on second click without leaving pay_pending open"}
-	var has_cs: bool = false
-	for st in p.combat:
-		if st.name == "Changing Shifts":
-			has_cs = true
+	var deck_after: int = p.deck.size()
+	var pay_empty: bool = board.pay_pending.is_empty()
 	board.free()
-	if not has_cs:
-		return {"name": name, "ok": false, "error": "Combat status 'Changing Shifts' not created"}
+	if not bool(r.get("ok", false)) or not pay_empty:
+		return {"name": name, "ok": false, "error": "0-cost card should execute on second click without leaving pay_pending open"}
+	if deck_after != deck_before - 1:
+		return {"name": name, "ok": false, "error": "Quick Rally should draw 1 card from deck"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_06_targeted_weapon_and_food_selection_cancel_and_equip() -> Dictionary:
-	var name := "06. Targeted card ('Traveler's Handy Sword' & 'Mondstadt Hash Browns') select, cancel, and target play"
+	var name := "06. Targeted Heal cards ('Major Heal' & 'Minor Heal') select, cancel, and target heal"
 	var board := _make_board(30, true)
 	var p := board.me()
-	# Deck 0 has Keqing (Sword), Fischl (Bow), Xingqiu (Sword)
-	p.characters[0].hp = 7
-	p.hand.assign(["Traveler's Handy Sword", "Mondstadt Hash Browns"])
+	p.characters[0].hp = 6
+	p.characters[1].defeated = true
+	p.characters[1].hp = 0
+	p.hand.assign(["Major Heal", "Minor Heal"])
 	p.dice.assign(["Omni", "Omni", "Omni"])
 	board.sync_from_state()
 
-	# 1. Click Weapon in hand -> enters awaiting_target state
+	# 1. Click targeted Heal in hand -> enters awaiting_target state (alive slots 0 & 2 valid; defeated slot 1 invalid)
 	var r_sel := board.select_or_play_hand_card(0, -2)
 	if not bool(r_sel.get("awaiting_target", false)) or board.selected_hand_index != 0:
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected weapon card to await target selection"}
+		return {"name": name, "ok": false, "error": "Expected Major Heal to await target selection"}
 
-	# Verify character slots 0 (Keqing, Sword) and 2 (Xingqiu, Sword) are marked valid targets, while 1 (Fischl, Bow) is not
 	if not board.own_char_slots[0].is_valid_target or board.own_char_slots[1].is_valid_target or not board.own_char_slots[2].is_valid_target:
 		board.free()
-		return {"name": name, "ok": false, "error": "Weapon valid target highlights on character slots are incorrect"}
+		return {"name": name, "ok": false, "error": "Heal valid target highlights on character slots are incorrect"}
 
-	# 2. Click same card again (now shows target prompt) & clear via Right-click/clear helper simulation
+	# 2. Click same card again (keeps awaiting_target) & clear selection
 	var r_again := board.select_or_play_hand_card(0, -2)
 	if not bool(r_again.get("awaiting_target", false)):
 		board.free()
@@ -227,50 +231,53 @@ static func _test_06_targeted_weapon_and_food_selection_cancel_and_equip() -> Di
 	board.selected_hand_index = -1
 	board.sync_from_state()
 
-	# 3. Select Weapon again and click Character 0 (Keqing)
+	# 3. Select Major Heal again and click Character 0 (heals 2 HP: 6 -> 8)
 	board.select_or_play_hand_card(0, -2)
 	board._on_char_slot_clicked(0, 0)
 	if board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected payment modal after clicking valid Sword character"}
-	var c_weap := board.confirm_payment_modal()
-	if not bool(c_weap.get("ok", false)) or String(p.characters[0].equipment.get("weapon", "")) != "Traveler's Handy Sword":
+		return {"name": name, "ok": false, "error": "Expected payment modal after clicking valid target character"}
+	var c_maj := board.confirm_payment_modal()
+	if not bool(c_maj.get("ok", false)) or p.characters[0].hp != 8:
 		board.free()
-		return {"name": name, "ok": false, "error": "Keqing should have Traveler's Handy Sword equipped"}
+		return {"name": name, "ok": false, "error": "Major Heal should heal Character 0 from 6 to 8 HP"}
 
-	# 4. Play Mondstadt Hash Browns (1 die, heals 2 HP) onto Character 0
-	var hb_idx: int = p.hand.find("Mondstadt Hash Browns")
-	board.select_or_play_hand_card(hb_idx, 0)
-	board.confirm_payment_modal()
+	# 4. Play Minor Heal (0 dice, heals 1 HP) onto Character 0 (8 -> 9)
+	var mh_idx: int = p.hand.find("Minor Heal")
+	board.select_or_play_hand_card(mh_idx, 0)
+	if not board.pay_pending.is_empty():
+		board.confirm_payment_modal()
 	var final_hp: int = p.characters[0].hp
 	board.free()
 	if final_hp != 9:
-		return {"name": name, "ok": false, "error": "Expected Keqing HP to heal from 7 to 9, got %d" % final_hp}
+		return {"name": name, "ok": false, "error": "Expected Character 0 HP to heal from 8 to 9, got %d" % final_hp}
 
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_07_invalid_target_and_insufficient_dice_rejection() -> Dictionary:
-	var name := "07. Invalid weapon target and insufficient dice rejection feedback"
+	var name := "07. Invalid defeated target and insufficient dice rejection feedback"
 	var board := _make_board(33, true)
 	var p := board.me()
-	p.hand.assign(["Traveler's Handy Sword", "Paimon"])
-	p.dice.assign(["Pyro", "Hydro"]) # Only 2 mismatched dice (Paimon needs 3 Same; Sword needs 2 Any)
+	p.characters[1].defeated = true
+	p.characters[1].hp = 0
+	p.hand.assign(["Major Heal", "Battle Cry"])
+	p.dice.assign(["Pyro"]) # 1 die: cannot pay Battle Cry (costs 2 Unaligned)
 	board.sync_from_state()
 
-	# 1. Try playing Sword onto Fischl (index 1, Bow user) -> rejected
+	# 1. Try playing Major Heal onto defeated character index 1 -> rejected
 	var r_bad_tgt := board.select_or_play_hand_card(0, 1)
 	if bool(r_bad_tgt.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Sword should be rejected on Bow character Fischl"}
+		return {"name": name, "ok": false, "error": "Major Heal should be rejected on defeated character"}
 
-	# 2. Try playing Paimon with only 2 dice (Click 1 = inspect, Click 2 = reject with toast)
+	# 2. Try playing Battle Cry with only 1 die (Click 1 = inspect, Click 2 = reject with toast)
 	board.select_or_play_hand_card(1, -2)
 	var r_no_dice := board.select_or_play_hand_card(1, -2)
 	var has_toast: bool = not board._toasts.is_empty()
 	board.free()
 	if bool(r_no_dice.get("ok", false)):
-		return {"name": name, "ok": false, "error": "Paimon should be rejected when player has only 2 dice"}
+		return {"name": name, "ok": false, "error": "Battle Cry should be rejected when player has only 1 die"}
 	if not has_toast:
 		return {"name": name, "ok": false, "error": "Rejection should produce a user-facing toast"}
 
@@ -278,58 +285,74 @@ static func _test_07_invalid_target_and_insufficient_dice_rejection() -> Diction
 
 
 static func _test_08_support_zone_full_rejection() -> Dictionary:
-	var name := "08. Support card rejected when support zone has 4 cards"
+	var name := "08. Most-injured Heal ('Team Tonic') and Shield ('Iron Guard') card execution"
 	var board := _make_board(35, true)
 	var p := board.me()
-	p.supports.clear()
-	for _i in range(4):
-		p.supports.append(TCGPlayerSystem.UnitInstance.new("Paimon", 2))
-	p.hand.assign(["Liben"])
-	p.dice.assign(["Omni", "Omni"])
+	p.characters[0].hp = 9
+	p.characters[1].hp = 4
+	p.characters[2].hp = 8
+	p.hand.assign(["Team Tonic", "Iron Guard"])
+	p.dice.assign(["Omni", "Omni", "Omni"])
 	board.sync_from_state()
 
 	board.select_or_play_hand_card(0, -2)
-	var r := board.select_or_play_hand_card(0, -2)
+	board.select_or_play_hand_card(0, -2)
+	board.confirm_payment_modal()
+	if p.characters[1].hp != 7:
+		board.free()
+		return {"name": name, "ok": false, "error": "Team Tonic should heal most injured character from 4 to 7"}
+
+	board.select_or_play_hand_card(0, -2)
+	board.select_or_play_hand_card(0, -2)
+	board.confirm_payment_modal()
+	var has_shield: bool = false
+	for st in p.combat:
+		if st.name == "Shield +2":
+			has_shield = true
 	board.free()
-	if bool(r.get("ok", false)):
-		return {"name": name, "ok": false, "error": "Support card should be rejected when support zone is full (4/4)"}
+	if not has_shield:
+		return {"name": name, "ok": false, "error": "Iron Guard should grant Shield +2 combat status"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_09_talent_card_active_character_and_energy_checks() -> Dictionary:
-	var name := "09. Talent card ('Stellar Predator') active character & play validation"
+	var name := "09. Buff cards ('Power Boost' & 'Energy Charge') boost skill DMG and Energy"
 	var board := _make_board(40, true)
+	if board.input_controller != null:
+		board.input_controller.debounce_ms = 0
 	var p := board.me()
-	# Ensure Player characters are Keqing (0), Fischl (1), Xingqiu (2)
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10)
-	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Fischl", 10)
-	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Xingqiu", 10)
+	var foe := board.game_state.players[1 - board.view_player]
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10)
+	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 10)
 	p.active = 0
-	p.hand.assign(["Stellar Predator"])
-	p.dice.assign(["Electro", "Electro", "Electro", "Omni"])
+	foe.active = 0
+	p.hand.assign(["Power Boost", "Energy Charge"])
+	p.dice.assign(["Omni", "Omni", "Pyro", "Pyro", "Pyro"])
 	board.sync_from_state()
 
-	# 1. While Keqing is active, Fischl's talent "Stellar Predator" must be rejected on 2nd click
+	# 1. Play Energy Charge -> +1 Energy on Pyro Vanguard
+	board.select_or_play_hand_card(1, -2)
+	board.select_or_play_hand_card(1, -2)
+	board.confirm_payment_modal()
+	if p.characters[0].energy != 1:
+		board.free()
+		return {"name": name, "ok": false, "error": "Energy Charge should grant +1 Energy"}
+
+	# 2. Play Power Boost -> Next Attack +2 boosts Normal Attack from 2 to 4 DMG
 	board.select_or_play_hand_card(0, -2)
-	var r_wrong_active := board.select_or_play_hand_card(0, -2)
-	if bool(r_wrong_active.get("ok", false)):
-		board.free()
-		return {"name": name, "ok": false, "error": "Stellar Predator should be rejected when Fischl is not active"}
-
-	# 2. Switch active to Fischl (index 1) and play Stellar Predator
-	p.active = 1
-	board.sync_from_state()
-	var r_ok := board.select_or_play_hand_card(0, 1)
-	if not bool(r_ok.get("ok", false)) or board.pay_pending.is_empty():
-		board.free()
-		return {"name": name, "ok": false, "error": "Stellar Predator should be playable when Fischl is active"}
-	var c_ok := board.confirm_payment_modal()
-	var talent_str: String = String(p.characters[1].equipment.get("talent", ""))
+	board.select_or_play_hand_card(0, -2)
+	board.confirm_payment_modal()
+	if board.animation_queue != null:
+		board.animation_queue.skip_all()
+	board._busy_timer = 0.0
+	board._on_skill_clicked(0)
+	var preview_dmg: int = int(board.foe_char_slots[0].preview_info.get("total_dmg", 0))
+	board._on_skill_clicked(0)
+	board.confirm_payment_modal()
+	var foe_hp: int = foe.characters[0].hp
 	board.free()
-	if not bool(c_ok.get("ok", false)):
-		return {"name": name, "ok": false, "error": "Stellar Predator confirm failed: %s" % str(c_ok.get("error", ""))}
-	if talent_str != "Stellar Predator":
-		return {"name": name, "ok": false, "error": "Fischl should have Stellar Predator equipped"}
+	if preview_dmg != 4 or foe_hp != 6:
+		return {"name": name, "ok": false, "error": "Expected Power Boost to preview 4 DMG and leave foe HP at 6, got preview=%d hp=%d" % [preview_dmg, foe_hp]}
 
 	return {"name": name, "ok": true, "error": ""}
 
@@ -338,29 +361,30 @@ static func _test_10_elemental_tuning_flow_and_omni_matching_rejection() -> Dict
 	var name := "10. Elemental Tuning converts non-matching die and rejects Omni/matching dice"
 	var board := _make_board(45, true)
 	var p := board.me()
-	# Active is Keqing (Electro)
-	p.hand.assign(["Strategize"])
-	p.dice.assign(["Omni", "Electro"])
+	var active_el: String = p.get_active_char().get_defn().element
+	var other_el: String = CardDataSystem.PYRO if active_el != CardDataSystem.PYRO else CardDataSystem.CRYO
+	p.hand.assign(["Tactical Draw"])
+	p.dice.assign(["Omni", active_el])
 	board.sync_from_state()
 
-	# 1. With only Omni and Electro dice, Elemental Tuning must be rejected
+	# 1. With only Omni and matching element dice, Elemental Tuning must be rejected
 	if board.begin_tune(0):
 		board.free()
 		return {"name": name, "ok": false, "error": "Tuning should be rejected when all dice are Omni or active element"}
 
-	# 2. Add a Pyro die (index 2) and tune Strategize into an Electro die
-	p.dice.append("Pyro")
+	# 2. Add a non-matching die and tune Tactical Draw into active element
+	p.dice.append(other_el)
 	board.sync_from_state()
 	if not board.begin_tune(0):
 		board.free()
 		return {"name": name, "ok": false, "error": "Tuning should open modal when a non-matching die exists"}
 	var res := board.confirm_payment_modal()
-	var ok_tuned: bool = p.hand.is_empty() and p.dice.count("Electro") == 2
+	var ok_tuned: bool = p.hand.is_empty() and p.dice.count(active_el) == 2
 	board.free()
 	if not bool(res.get("ok", false)):
 		return {"name": name, "ok": false, "error": "Elemental Tuning confirm failed"}
 	if not ok_tuned:
-		return {"name": name, "ok": false, "error": "Expected hand card consumed and Pyro die converted to Electro"}
+		return {"name": name, "ok": false, "error": "Expected hand card consumed and %s die converted to %s" % [other_el, active_el]}
 
 	return {"name": name, "ok": true, "error": ""}
 
@@ -369,7 +393,7 @@ static func _test_11_skill_and_switch_payment_interaction_and_synchronization() 
 	var name := "11. Skill & character switch payment modal and turn handoff"
 	var board := _make_board(50, true)
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
 	p.active = 0
 	p.dice.assign(["Electro", "Electro", "Electro", "Pyro"])
 	board.sync_from_state()
@@ -399,10 +423,10 @@ static func _test_12_coin_intro_and_rematch_config_preserved() -> Dictionary:
 	var name := "12. Coin Toss intro skips cleanly & rematch preserves custom decks and AI levels"
 	var board: TCGMatchScene = MATCH_SCENE_RES.instantiate() as TCGMatchScene
 	board._build_board_components()
-	var chars0: Array = ["Diluc", "Kaeya", "Fischl"]
-	var deck0: Array = TCGDeckSystem.build_preset(["Diluc", "Kaeya", "Fischl"])
-	var chars1: Array = ["Keqing", "Mona", "Noelle"]
-	var deck1: Array = TCGDeckSystem.build_preset(["Keqing", "Mona", "Noelle"])
+	var chars0: Array = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
+	var deck0: Array = TCGDeckSystem.build_preset(chars0)
+	var chars1: Array = ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
+	var deck1: Array = TCGDeckSystem.build_preset(chars1)
 	board.start_match_with_decks("pve", chars0, deck0, chars1, deck1, 77, false, "normal", "hard", true)
 
 	if not board.intro_active():
@@ -416,8 +440,8 @@ static func _test_12_coin_intro_and_rematch_config_preserved() -> Dictionary:
 	board.game_state.phase = "over"
 	board.restart_match()
 	var kept_ok: bool = (
-		board.game_state.players[0].characters[0].name == "Diluc"
-		and board.game_state.players[1].characters[2].name == "Noelle"
+		board.game_state.players[0].characters[0].name == "Pyro Vanguard"
+		and board.game_state.players[1].characters[2].name == "Anemo Scout"
 		and board.player_labels[1] == "AI (Hard)"
 	)
 	board.free()
@@ -430,7 +454,7 @@ static func _test_13_hotseat_cover_and_first_player_setup_sync() -> Dictionary:
 	var name := "13. Hotseat pass-device privacy cover & initial first_player sync"
 	var board := _make_board(50, true)
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
 	p.active = 0
 	p.dice.assign(["Omni", "Omni", "Omni", "Omni"])
 	board.sync_from_state()
@@ -454,7 +478,7 @@ static func _test_13_hotseat_cover_and_first_player_setup_sync() -> Dictionary:
 	# Find a seed whose first_player == 1 and verify p_show_intro=true syncs view_player to actor
 	var board2: TCGMatchScene = MATCH_SCENE_RES.instantiate() as TCGMatchScene
 	board2._build_board_components()
-	var chars_a: Array = ["Keqing", "Fischl", "Xingqiu"]
+	var chars_a: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var deck_a: Array = TCGDeckSystem.build_preset(chars_a)
 	var found_p1_first: bool = false
 	for s in range(1, 20):
@@ -556,15 +580,16 @@ static func _test_16_hover_shows_no_details_and_click_twice_plays() -> Dictionar
 	var name := "16. Hover shows no description anywhere; 1st click inspects, 2nd click plays/switches"
 	var board := _make_board(91, true)
 	var p := board.me()
-	p.hand.assign(["Changing Shifts"])
+	p.hand.assign(["Quick Rally"])
 	p.dice.assign(["Omni", "Omni", "Omni", "Omni"])
+	var deck_before: int = p.deck.size()
 	board.sync_from_state()
 
 	# 1. Hovering char, skill, and card must NOT populate _inspected or select a card
 	board._on_char_slot_hovered(0, 0, true)
 	board._on_char_slot_hovered(1, 0, true)
 	board._on_skill_hovered(0, true)
-	board._on_hand_card_hovered(0, "Changing Shifts", true)
+	board._on_hand_card_hovered(0, "Quick Rally", true)
 	if not board._inspected.is_empty() or board.selected_hand_index != -1 or not board.pay_pending.is_empty():
 		board.free()
 		return {"name": name, "ok": false, "error": "Hovering must not open description/inspection"}
@@ -603,13 +628,13 @@ static func _test_16_hover_shows_no_details_and_click_twice_plays() -> Dictionar
 
 	# 5. Clicking 0-cost hand card once inspects; clicking twice plays it
 	board.select_or_play_hand_card(0, -2)
-	if board.selected_hand_index != 0 or p.hand.size() != 1:
+	if board.selected_hand_index != 0 or p.deck.size() != deck_before:
 		board.free()
 		return {"name": name, "ok": false, "error": "1st click on hand card should inspect without playing"}
 	board.select_or_play_hand_card(0, -2)
-	if p.hand.size() != 0:
+	if p.deck.size() != deck_before - 1:
 		board.free()
-		return {"name": name, "ok": false, "error": "2nd click on 0-cost hand card should play it"}
+		return {"name": name, "ok": false, "error": "2nd click on 0-cost hand card should play it and draw 1"}
 
 	board.free()
 	return {"name": name, "ok": true, "error": ""}
@@ -714,13 +739,13 @@ static func _test_18_skill_and_card_damage_reaction_preview() -> Dictionary:
 	board.dismiss_hotseat_cover()
 	var p := board.me()
 	var f: TCGPlayerSystem.PlayerState = board.game_state.players[1 - board.view_player]
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
 	p.active = 0
 	p.dice.assign(["Electro", "Electro", "Electro", "Omni"])
-	f.characters[0] = TCGPlayerSystem.CharacterInstance.new("Kaeya", 5)
+	f.characters[0] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 5)
 	f.characters[0].aura = CardDataSystem.CRYO
-	f.characters[1] = TCGPlayerSystem.CharacterInstance.new("Ganyu", 10)
-	f.characters[2] = TCGPlayerSystem.CharacterInstance.new("Xingqiu", 10)
+	f.characters[1] = TCGPlayerSystem.CharacterInstance.new("Geo Guardian", 10)
+	f.characters[2] = TCGPlayerSystem.CharacterInstance.new("Hydro Cleric", 10)
 	f.active = 0
 	board.sync_from_state()
 

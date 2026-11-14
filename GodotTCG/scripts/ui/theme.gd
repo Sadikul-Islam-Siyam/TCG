@@ -350,7 +350,7 @@ static func draw_text_pos(
 ) -> void:
 	if txt.is_empty():
 		return
-	var f: Font = ThemeDB.fallback_font
+	var f: Font = get_display_font() if bold else get_body_font()
 	var ascent: float = f.get_ascent(size)
 	var baseline := Vector2(pos.x, pos.y + ascent)
 	if shadow:
@@ -361,20 +361,28 @@ static func draw_text_pos(
 			HORIZONTAL_ALIGNMENT_LEFT,
 			-1,
 			size,
-			3,
-			Color(0.0, 0.0, 0.0, 0.85)
+			2,
+			Color(0.0, 0.0, 0.0, 0.78)
 		)
 	canvas.draw_string(f, baseline, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
-	if bold:
-		canvas.draw_string(
-			f,
-			baseline + Vector2(0.6, 0.0),
-			txt,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			size,
-			col
-		)
+
+
+static func fit_font_size(
+	txt: String,
+	max_w: float,
+	base_size: int,
+	min_size: int = 11,
+	bold: bool = false
+) -> int:
+	if txt.is_empty() or max_w <= 0.0:
+		return base_size
+	var f: Font = get_display_font() if bold else get_body_font()
+	var sz: int = base_size
+	while sz > min_size:
+		if f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x <= max_w:
+			break
+		sz -= 1
+	return sz
 
 
 static func draw_text_centered(

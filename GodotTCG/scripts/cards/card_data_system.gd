@@ -43,12 +43,12 @@ const DICE_WEIGHTS: Array[float] = [
 const DICE_PER_ROUND: int = 8
 const MAX_DICE: int = 16
 const MAX_HAND: int = 10
-const MAX_SUMMONS: int = 4
-const MAX_SUPPORTS: int = 4
+const MAX_SUMMONS: int = 0
+const MAX_SUPPORTS: int = 0
 const HAND_START: int = 5
 const DRAW_END: int = 2
-const DECK_SIZE: int = 30
-const MAX_COPIES: int = 2
+const DECK_SIZE: int = 12
+const MAX_COPIES: int = 3
 
 ## Reaction definitions from `engine/rules.py:REACTIONS` + Anemo/Geo reactions
 const REACTION_DEFS: Array[Dictionary] = [
@@ -215,6 +215,7 @@ class CardData extends Resource:
 	## Represents an action card definition (`engine/registry.py:CardDef`).
 	@export var name: String = ""
 	@export var kind: String = "event"          # "event" | "support" | "weapon" | "artifact" | "talent"
+	@export var role: String = ""               # Simple category tag: "heal" | "buff"
 	@export var cost: CostData
 	@export var needs_char: bool = false
 	@export var usages: int = -1                # -1 means None
@@ -263,6 +264,16 @@ static func describe_skill_steps(steps: Array[EffectStepData]) -> String:
 				parts.append("Target gains %s." % st.target_name)
 			"force_switch_foe":
 				parts.append("The enemy must switch character.")
+			"heal":
+				parts.append("Heal %d HP." % st.amount)
+			"heal_most_injured":
+				parts.append("Heal most injured ally for %d HP." % st.amount)
+			"gain_energy":
+				parts.append("Gain %d Energy." % st.amount)
+			"draw":
+				parts.append("Draw %d card(s)." % st.amount)
+			"gain_dice":
+				parts.append("Gain %d %s die/dice." % [st.amount, st.dtype if not st.dtype.is_empty() else "Omni"])
 	return " ".join(parts)
 
 
@@ -284,6 +295,57 @@ var resonance_boost: int = 7
 
 func _ready() -> void:
 	load_all_content()
+
+
+func load_json_dict(res_path: String) -> Dictionary:
+	## Loads and parses a JSON dictionary file from `res_path`, returning `{}` on failure.
+	if not FileAccess.file_exists(res_path):
+		push_warning("CardDataSystem: missing data file '%s'" % res_path)
+		return {}
+	var raw_text: String = FileAccess.get_file_as_string(res_path)
+	var parsed = JSON.parse_string(raw_text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_warning("CardDataSystem: invalid JSON object in '%s'" % res_path)
+		return {}
+	return parsed
+
+
+func parse_cost(d: Dictionary) -> CostData:
+	return CostData.new(
+		str(d.get("element", "")),
+		int(d.get("n", 0)),
+		int(d.get("unaligned", 0)),
+		int(d.get("energy", 0))
+	)
+
+
+func parse_steps(arr: Array, default_heal_target: bool = false) -> Array[EffectStepData]:
+	var out: Array[EffectStepData] = []
+	for item in arr:
+		if typeof(item) != TYPE_DICTIONARY:
+			continue
+		var sd: Dictionary = item
+		var op_str: String = str(sd.get("op", ""))
+		var dtype_str: String = str(sd.get("dtype", sd.get("element", "")))
+		var target_str: String = str(sd.get("target_name", sd.get("status", "")))
+		var step_use_target: bool = bool(sd.get("use_target", default_heal_target and op_str == "heal"))
+		out.append(EffectStepData.new(
+			op_str,
+			int(sd.get("amount", 0)),
+			dtype_str,
+			target_str,
+			step_use_target
+		))
+	return out
+
+
+func infer_card_role(cd: CardData) -> String:
+	if not cd.role.is_empty():
+		return cd.role
+	for st in cd.play_steps:
+		if st.op == "heal" or st.op == "heal_most_injured":
+			return "heal"
+	return "buff"
 
 
 func load_all_content() -> void:
@@ -339,30 +401,25 @@ func get_card_def(card_name: String) -> CardData:
 
 
 func get_card_priorities() -> Dictionary:
-	## Exact port of `content/presets.py:priority()`.
 	var pr := base_priorities.duplicate()
 	for n in card_defs.keys():
-		var cd: CardData = card_defs[n]
-		if cd.kind == "talent":
-			pr[n] = talent_boost
-		elif cd.kind == "weapon":
-			pr[n] = weapon_boost
-		elif not cd.resonance.is_empty():
-			pr[n] = resonance_boost
+		if not pr.has(n):
+			pr[n] = 2
 	return pr
 
 
 func starter_deck() -> Array[String]:
-	## Exact port of `content/cards.py:starter_deck()` (30 cards for engine tests).
+	load_all_content()
 	var out: Array[String] = []
-	for _i in range(8):
-		out.append("Sweet Madame")
-	for _i in range(8):
-		out.append("Mondstadt Hash Browns")
-	for _i in range(8):
-		out.append("Strategize")
-	for _i in range(6):
-		out.append("Paimon")
+	var names: Array = card_defs.keys()
+	names.sort()
+	for cname in names:
+		var cd: CardData = card_defs[cname]
+		if is_card_allowed_in_deck(cd, []):
+			for _c in range(MAX_COPIES):
+				out.append(str(cname))
+				if out.size() >= DECK_SIZE:
+					return out
 	return out
 
 

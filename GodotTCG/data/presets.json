@@ -1,0 +1,19 @@
+{
+  "presets": {
+    "Fire & Lightning": ["Pyro Vanguard", "Electro Ranger", "Geo Guardian"],
+    "Freeze & Shatter": ["Cryo Knight", "Hydro Cleric", "Pyro Vanguard"],
+    "Wind & Stone": ["Anemo Scout", "Geo Guardian", "Hydro Cleric"]
+  },
+  "priorities": {
+    "Power Boost": 4,
+    "Iron Guard": 4,
+    "Major Heal": 3,
+    "Tactical Draw": 3,
+    "Energy Charge": 3,
+    "Battle Cry": 2,
+    "Fortify": 2,
+    "Team Tonic": 2,
+    "Minor Heal": 1,
+    "Quick Rally": 1
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "statuses": [
+    {
+      "name": "Frozen",
+      "text": "Cannot act until End Phase. Physical or Pyro DMG +2 and thaws.",
+      "usages": -1,
+      "duration": 1
+    },
+    {
+      "name": "Petrified",
+      "text": "Cannot act until End Phase.",
+      "usages": -1,
+      "duration": 1
+    },
+    {
+      "name": "Crystallize Shield",
+      "text": "Blocks 1 damage to your active character (max 2).",
+      "shield": 1,
+      "max_shield": 2
+    },
+    {
+      "name": "Shield +1",
+      "text": "Blocks 1 damage to your active character.",
+      "shield": 1,
+      "max_shield": 3
+    },
+    {
+      "name": "Shield +2",
+      "text": "Blocks 2 damage to your active character.",
+      "shield": 2,
+      "max_shield": 4
+    },
+    {
+      "name": "Shield +3",
+      "text": "Blocks 3 damage to your active character.",
+      "shield": 3,
+      "max_shield": 5
+    },
+    {
+      "name": "Attack +1",
+      "text": "This round, your Normal Attack, Skill, and Ult deal +1 DMG.",
+      "duration": 1,
+      "outgoing_rule": "bonus_any_1"
+    },
+    {
+      "name": "Attack +2",
+      "text": "This round, your Normal Attack, Skill, and Ult deal +2 DMG.",
+      "duration": 1,
+      "outgoing_rule": "bonus_any_2"
+    },
+    {
+      "name": "Normal Boost +1",
+      "text": "This round, Normal Attacks deal +1 DMG.",
+      "duration": 1,
+      "outgoing_rule": "bonus_normal_1"
+    },
+    {
+      "name": "Skill Boost +2",
+      "text": "This round, Skills deal +2 DMG.",
+      "duration": 1,
+      "outgoing_rule": "bonus_skill_2"
+    },
+    {
+      "name": "Ult Boost +2",
+      "text": "This round, Ults deal +2 DMG.",
+      "duration": 1,
+      "outgoing_rule": "bonus_burst_2"
+    },
+    {
+      "name": "Next Attack +1",
+      "text": "Your next Normal Attack, Skill, or Ult deals +1 DMG.",
+      "usages": 1,
+      "outgoing_rule": "bonus_next_any_1"
+    },
+    {
+      "name": "Next Attack +2",
+      "text": "Your next Normal Attack, Skill, or Ult deals +2 DMG.",
+      "usages": 1,
+      "outgoing_rule": "bonus_next_any_2"
+    },
+    {
+      "name": "Guard Stance",
+      "text": "Reduces incoming DMG to active character by 1 (2 uses).",
+      "usages": 2,
+      "reduce": 1,
+      "reduce_min": 1
+    }
+  ]
+}

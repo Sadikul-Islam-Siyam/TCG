@@ -9,8 +9,8 @@ extends RefCounted
 
 
 static func _start(
-	c0: Array = ["Keqing", "Fischl", "Diluc"],
-	c1: Array = ["Kaeya", "Ganyu", "Xingqiu"],
+	c0: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"],
+	c1: Array = ["Cryo Knight", "Hydro Cleric", "Geo Guardian"],
 	seed_val: int = 1
 ) -> TCGGameState:
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), seed_val)
@@ -233,10 +233,10 @@ static func _test_ai_never_peeks_hidden_cards() -> void:
 			rev_hand.reverse()
 			t.players[1].hand = rev_hand
 		else:
-			var paimon_hand: Array[String] = []
+			var filler_hand: Array[String] = []
 			for _i in range(t.players[1].hand.size()):
-				paimon_hand.append("Paimon")
-			t.players[1].hand = paimon_hand
+				filler_hand.append("Iron Guard")
+			t.players[1].hand = filler_hand
 
 		var rev_foe_deck: Array[String] = t.players[1].deck.duplicate()
 		rev_foe_deck.reverse()
@@ -287,8 +287,8 @@ static func _test_planner_one_move_lethal() -> void:
 
 static func _test_planner_chains_equipment_then_attack() -> void:
 	var s := _start()
-	s.players[1].characters[0].hp = 4   # Skill does 3: needs the weapon's +1
-	_give(s, 0, ["Traveler's Handy Sword", "Strategize"])
+	s.players[1].characters[0].hp = 5   # Skill does 3: needs Power Boost (+2 DMG)
+	_give(s, 0, ["Power Boost", "Tactical Draw"])
 	var plan = TCGPlanner.plan_lethal(TCGWorld.determinize(s, 0, _make_rng(1)), 0)
 	assert(plan != null and plan.size() == 2)
 	assert(plan[0].type == "card" and plan[1].type == "skill")

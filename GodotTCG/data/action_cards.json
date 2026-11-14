@@ -1,0 +1,114 @@
+{
+  "cards": [
+    {
+      "name": "Minor Heal",
+      "kind": "event",
+      "role": "heal",
+      "cost": { "n": 0, "unaligned": 0 },
+      "use_target": true,
+      "text": "Heal a chosen character for 1 HP.",
+      "steps": [
+        { "op": "heal", "amount": 1 }
+      ]
+    },
+    {
+      "name": "Major Heal",
+      "kind": "event",
+      "role": "heal",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": true,
+      "text": "Heal a chosen character for 2 HP.",
+      "steps": [
+        { "op": "heal", "amount": 2 }
+      ]
+    },
+    {
+      "name": "Team Tonic",
+      "kind": "event",
+      "role": "heal",
+      "cost": { "n": 0, "unaligned": 2 },
+      "use_target": false,
+      "text": "Heal your most injured character for 3 HP.",
+      "steps": [
+        { "op": "heal_most_injured", "amount": 3 }
+      ]
+    },
+    {
+      "name": "Power Boost",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Your next Normal Attack, Skill, or Ult deals +2 DMG.",
+      "steps": [
+        { "op": "combat_status", "status": "Next Attack +2" }
+      ]
+    },
+    {
+      "name": "Battle Cry",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 2 },
+      "use_target": false,
+      "text": "This round, your Normal Attack, Skill, and Ult deal +1 DMG.",
+      "steps": [
+        { "op": "combat_status", "status": "Attack +1" }
+      ]
+    },
+    {
+      "name": "Iron Guard",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Grant 2 Shield to your active character.",
+      "steps": [
+        { "op": "combat_status", "status": "Shield +2" }
+      ]
+    },
+    {
+      "name": "Fortify",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 2 },
+      "use_target": false,
+      "text": "Grant 3 Shield to your active character.",
+      "steps": [
+        { "op": "combat_status", "status": "Shield +3" }
+      ]
+    },
+    {
+      "name": "Energy Charge",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Your active character gains 1 Energy.",
+      "steps": [
+        { "op": "gain_energy", "amount": 1 }
+      ]
+    },
+    {
+      "name": "Tactical Draw",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Draw 2 cards.",
+      "steps": [
+        { "op": "draw", "amount": 2 }
+      ]
+    },
+    {
+      "name": "Quick Rally",
+      "kind": "event",
+      "role": "buff",
+      "cost": { "n": 0, "unaligned": 0 },
+      "use_target": false,
+      "text": "Draw 1 card.",
+      "steps": [
+        { "op": "draw", "amount": 1 }
+      ]
+    }
+  ]
+}

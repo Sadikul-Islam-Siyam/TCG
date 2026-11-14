@@ -196,35 +196,28 @@ static func draw_card_surface(
 	var compact: bool = (not p_large and h < 120.0)
 	var art_h: float = 128.0 if p_large else (40.0 if compact else roundf(h * 0.44))
 	var art_r := Rect2(ox + 7, oy + 7, w - 14, art_h)
-	var cat_col := Color8(48, 72, 104)
-	if cd.kind == "weapon":
-		cat_col = Color8(92, 52, 46)
-	elif cd.kind == "artifact":
-		cat_col = Color8(92, 74, 38)
-	elif cd.kind == "support":
-		cat_col = Color8(44, 78, 86)
-	elif cd.kind == "talent":
-		cat_col = Color8(68, 48, 88)
-	if not cd.resonance.is_empty():
-		cat_col = ElementDB.get_dark_color(cd.resonance)
+	var role_name: String = CardDataSystem.infer_card_role(cd)
+	var cat_col: Color = Color8(36, 68, 52) if role_name == "heal" else Color8(40, 56, 78)
 
 	TCGTheme.draw_rounded_box(canvas, art_r, cat_col, TCGTheme.GOLD_D, 7, 1)
 
-	# Category / Element Emblem
-	var ac := art_r.get_center()
-	var rad: float = 32.0 if p_large else (14.0 if compact else 24.0)
-	if not cd.resonance.is_empty():
-		TCGArt.draw_elem_symbol(canvas, cd.resonance, ac, rad)
-	elif cd.kind == "weapon":
-		TCGArt.draw_status_badge(canvas, Rect2(ac.x - rad, ac.y - rad, rad * 2, rad * 2), "weapon", "Physical", 0)
-	elif cd.kind == "artifact":
-		TCGArt.draw_status_badge(canvas, Rect2(ac.x - rad, ac.y - rad, rad * 2, rad * 2), "artifact", "Geo", 0)
-	elif cd.kind == "talent" and not cd.char_name.is_empty():
-		var ch_d := CardDataSystem.get_char_def(cd.char_name)
-		var el := ch_d.element if ch_d != null else "Omni"
-		TCGArt.draw_elem_symbol(canvas, el, ac, rad)
+	var card_tex: Texture2D = TCGArt.get_card_texture(cd.name)
+	if card_tex != null:
+		TCGArt.draw_texture_cover(canvas, card_tex, art_r.grow(-2.0), Color.WHITE, 0.5)
 	else:
-		TCGArt.draw_elem_symbol(canvas, "Omni", ac, rad * 0.9)
+		# Category / Element Emblem
+		var ac := art_r.get_center()
+		var rad: float = 32.0 if p_large else (14.0 if compact else 24.0)
+		if not cd.cost.element.is_empty():
+			TCGArt.draw_elem_symbol(canvas, cd.cost.element, ac, rad)
+		elif role_name == "heal":
+			# Crisp cross / heal emblem for Heal cards
+			var arm: float = rad * 0.58
+			var thick: float = maxf(4.0, rad * 0.28)
+			canvas.draw_rect(Rect2(ac.x - arm, ac.y - thick * 0.5, arm * 2.0, thick), TCGTheme.HEAL)
+			canvas.draw_rect(Rect2(ac.x - thick * 0.5, ac.y - arm, thick, arm * 2.0), TCGTheme.HEAL)
+		else:
+			TCGArt.draw_elem_symbol(canvas, "Omni", ac, rad * 0.9)
 
 	# Cost gems stacked top-left
 	var gem_r: float = 15.0 if p_large else (8.0 if compact else 13.0)
@@ -238,40 +231,24 @@ static func draw_card_surface(
 			TCGArt.draw_cost_gem(canvas, String(pair[0]), int(pair[1]), Vector2(ox + 8.0 + gem_r, cy), gem_r)
 			cy += gem_step
 
-	# Support usages badge OR small subtype tag top-right (T5.1)
-	if cd.usages > 0 and not compact:
-		var ub_r: float = 13.0 if p_large else 11.5
-		var ub_c := Vector2(ox + w - (ub_r + 8.0), oy + (ub_r + 8.0))
-		canvas.draw_circle(ub_c, ub_r, Color8(24, 34, 48))
-		canvas.draw_arc(ub_c, ub_r, 0.0, TAU, 16, TCGTheme.GOLD, 1.5)
-		TCGTheme.draw_text_centered(canvas, str(cd.usages), ub_c, 14 if p_large else 12, TCGTheme.GOLD_L, true, false)
-	elif cd.kind in ["weapon", "artifact", "talent"] and not compact:
-		var tag_s := "WPN" if cd.kind == "weapon" else ("ART" if cd.kind == "artifact" else "TLN")
-		var tr := Rect2(ox + w - 40.0, oy + 9.0, 32.0, 18.0)
-		TCGTheme.draw_rounded_box(canvas, tr, Color(0.08, 0.11, 0.16, 0.90), TCGTheme.GOLD_D, 4, 1)
-		TCGTheme.draw_text_centered(canvas, tag_s, tr.get_center(), 10, TCGTheme.GOLD_L, true, false)
-
-	# Category / subtype banner
+	# Minimal role pill on large inspection/deck cards only (no cluttered labels on hand cards)
 	var cat_y: float = art_r.end.y + 4.0
-	var cat_txt: String = "RESONANCE" if not cd.resonance.is_empty() else cd.kind.to_upper()
-	if not cd.weapon.is_empty():
-		cat_txt += " · " + cd.weapon.to_upper()
-	elif not cd.char_name.is_empty():
-		cat_txt += " · " + cd.char_name.to_upper()
-	if not compact:
+	if p_large:
+		var role_col: Color = TCGTheme.HEAL if role_name == "heal" else TCGTheme.GOLD
 		TCGTheme.draw_text_centered(
 			canvas,
-			cat_txt,
+			role_name.to_upper(),
 			Vector2(ox + w * 0.5, cat_y + 8.0),
-			13 if p_large else 11,
-			TCGTheme.GOLD_D,
+			13,
+			role_col,
 			true,
 			false
 		)
 
 	# Card Name
-	var disp_title: String = cd.name.replace("Elemental Resonance: ", "") if not p_large else cd.name
-	var name_rect := Rect2(ox + 8, cat_y + (2.0 if compact else 20.0), w - 16, 28 if compact else (54 if not p_large else 46))
+	var disp_title: String = cd.name
+	var name_y_off: float = 20.0 if p_large else (2.0 if compact else 8.0)
+	var name_rect := Rect2(ox + 8, cat_y + name_y_off, w - 16, 28 if compact else (54 if not p_large else 46))
 	TCGTheme.draw_wrapped(
 		canvas,
 		disp_title,

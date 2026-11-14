@@ -17,6 +17,12 @@ func _ready() -> void:
 	var args: PackedStringArray = OS.get_cmdline_args()
 	var user_args: PackedStringArray = OS.get_cmdline_user_args()
 
+	if args.has("--validate-data") or user_args.has("--validate-data"):
+		var data_ok := _validate_custom_data()
+		TCGArt.clear_cache()
+		get_tree().quit(0 if data_ok else 1)
+		return
+
 	if args.has("--run-tests") or user_args.has("--run-tests") or DisplayServer.get_name() == "headless":
 		var all_ok := _run_verification_summary()
 		if args.has("--quit-after-tests") or user_args.has("--quit-after-tests"):
@@ -176,6 +182,41 @@ func _run_verification_summary() -> bool:
 	return ok
 
 
+func _validate_custom_data() -> bool:
+	var errors: Array[String] = TCGDataValidator.validate_all(CardDataSystem)
+	if CardDataSystem.roster.size() >= 3:
+		var sample_chars: Array[String] = [CardDataSystem.roster[0], CardDataSystem.roster[1], CardDataSystem.roster[2]]
+		var starter: Array[String] = CardDataSystem.starter_deck()
+		for err in TCGDeckSystem.validate_deck(sample_chars, starter):
+			errors.append("Starter deck invalid: %s" % err)
+	var presets: Dictionary = TCGDeckSystem.preset_decks()
+	for pname in presets.keys():
+		var pair: Array = presets[pname]
+		var errs: Array[String] = TCGDeckSystem.validate_deck(pair[0], pair[1])
+		for err in errs:
+			errors.append("Preset '%s' deck invalid: %s" % [str(pname), err])
+	if errors.is_empty():
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 42
+		var rand_pair: Array = TCGAIPlayer.random_deck(rng)
+		for err in TCGDeckSystem.validate_deck(rand_pair[0], rand_pair[1]):
+			errors.append("AI random deck invalid: %s" % err)
+
+	if errors.is_empty():
+		print("[Data Check] OK: %d characters | %d action cards | %d statuses | %d presets" % [
+			CardDataSystem.char_defs.size(),
+			CardDataSystem.card_defs.size(),
+			CardDataSystem.status_defs.size(),
+			CardDataSystem.preset_defs.size(),
+		])
+		return true
+
+	print("[Data Check] FAILED (%d error(s)):" % errors.size())
+	for err in errors:
+		print("  - %s" % err)
+	return false
+
+
 func _capture_stage7_screenshots() -> void:
 	var shots_dir := ProjectSettings.globalize_path("res://shots")
 	DirAccess.make_dir_recursive_absolute(shots_dir)
@@ -188,16 +229,16 @@ func _capture_stage7_screenshots() -> void:
 		board.view_player = act_p
 		board.human_flags[act_p] = true
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Keqing", 10, 3)
-	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Fischl", 10, 1)
-	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Xingqiu", 10, 0)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10, 2)
+	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10, 1)
+	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 10, 0)
 	p.active = 0
 
 	var foe := board.game_state.players[1 - board.view_player]
-	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Diluc", 6, 1)
-	foe.characters[0].aura = "Pyro" # Diluc has Pyro aura -> Keqing Electro triggers Overloaded!
-	foe.characters[1] = TCGPlayerSystem.CharacterInstance.new("Kaeya", 8, 2)
-	foe.characters[2] = TCGPlayerSystem.CharacterInstance.new("Mona", 10, 0)
+	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 6, 1)
+	foe.characters[0].aura = "Pyro" # Pyro Vanguard has Pyro aura -> Electro triggers Overloaded!
+	foe.characters[1] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 8, 1)
+	foe.characters[2] = TCGPlayerSystem.CharacterInstance.new("Hydro Cleric", 10, 0)
 	foe.active = 0
 
 	p.dice.assign(["Omni", "Electro", "Electro", "Electro", "Pyro", "Hydro", "Cryo", "Geo"])
@@ -209,7 +250,7 @@ func _capture_stage7_screenshots() -> void:
 			"kind": "skill",
 			"player": board.view_player,
 			"char": 0,
-			"skill": "Starward Sword",
+			"skill": "Storm Volley",
 			"skill_kind": "burst",
 		},
 		{
@@ -282,10 +323,10 @@ func _capture_stage10_screenshots() -> void:
 	ds_img.save_png(ds_path)
 	print("Saved Stage 10 deck select screenshot: " + ds_path)
 
-	# 2. Capture Deck Builder populated with 3 characters + 30 CSP-autofilled cards
+	# 2. Capture Deck Builder populated with 3 characters + CSP-autofilled cards
 	show_deck_builder()
 	var db: TCGDeckBuilderScene = current_screen as TCGDeckBuilderScene
-	db.chars = ["Keqing", "Fischl", "Xingqiu"]
+	db.chars = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	db.press("fill")
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
@@ -322,7 +363,7 @@ func _capture_audit_screenshots() -> void:
 	# 2. Deck Builder Load Modal (verifies _modal_layer cleanly covers _search_edit)
 	show_deck_builder()
 	var db: TCGDeckBuilderScene = current_screen as TCGDeckBuilderScene
-	db.chars = ["Diluc", "Kaeya", "Fischl"]
+	db.chars = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
 	db.press("fill")
 	db.press("load")
 	await _snap(shots_dir, "audit_02_deck_builder_load_modal.png")
@@ -346,8 +387,8 @@ func _capture_audit_screenshots() -> void:
 	board.view_player = board.actor()
 	board.human_flags[board.view_player] = true
 	var p := board.me()
-	p.hand.assign(["Traveler's Handy Sword", "Paimon", "Strategize", "Lotus Flower Crisp"])
-	p.characters[0].equipment["weapon"] = "Traveler's Handy Sword"
+	p.hand.assign(["Power Boost", "Iron Guard", "Tactical Draw", "Major Heal"])
+	TCGRulesEngine.add_status(p.combat, "Attack +1")
 	p.characters[0].aura = "Electro"
 	board.game_state.players[1 - board.view_player].characters[0].aura = "Pyro"
 	board.sync_from_state()
@@ -372,7 +413,7 @@ func _capture_audit_screenshots() -> void:
 	board.start_interactive_match("pve", 0, 1, 42, true)
 	board.view_player = board.actor()
 	board.human_flags[board.view_player] = true
-	board.me().hand.assign(["Traveler's Handy Sword", "Paimon", "Strategize", "Lotus Flower Crisp", "Changing Shifts"])
+	board.me().hand.assign(["Power Boost", "Iron Guard", "Tactical Draw", "Major Heal", "Quick Rally"])
 	board.me().characters[0].aura = "Electro"
 	board.game_state.players[1 - board.view_player].characters[0].aura = "Pyro"
 	board.sync_from_state()
@@ -428,11 +469,11 @@ func _run_live_playtest() -> void:
 	menu.mode_selected.emit("pve")
 	await get_tree().process_frame
 
-	print("[Playtest] 2. On Deck Select -> picking Preset 1 (Electro-Charged) vs Preset 4 (Melt Burst), AI: Normal")
+	print("[Playtest] 2. On Deck Select -> picking Preset 0 vs Preset 1, AI: Normal")
 	var ds: TCGDeckSelectScene = current_screen as TCGDeckSelectScene
 	assert(ds != null, "Expected TCGDeckSelectScene")
-	ds.press(["pick", 0, 1])
-	ds.press(["pick", 1, 4])
+	ds.press(["pick", 0, 0])
+	ds.press(["pick", 1, 1])
 	ds.press(["level", 1, "normal"])
 	ds.press("start")
 	await get_tree().process_frame

@@ -167,11 +167,11 @@ static func _test_dice_tray_roll_and_tune_animation_state() -> String:
 static func _test_skill_cost_indicators_and_affordability() -> String:
 	CardDataSystem.load_all_content()
 	var bar := TCGSkillBar.new()
-	var ch := TCGPlayerSystem.CharacterInstance.new("Keqing", 10, 0)
+	var ch := TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10, 0)
 	var d: CardDataSystem.CharData = ch.get_defn()
 	if d == null:
 		bar.free()
-		return "Failed to load Keqing definition"
+		return "Failed to load Pyro Vanguard definition"
 
 	# Setup with normal skill usable, but burst unusable (0 energy)
 	var usable: Array[bool] = [true, true, false]
@@ -266,7 +266,7 @@ static func _test_skill_burst_and_defeat_ribbons() -> String:
 			"kind": "skill",
 			"player": scene.view_player,
 			"char": 0,
-			"skill": "Starward Sword",
+			"skill": "Crimson Nova",
 			"skill_kind": "burst",
 		},
 		{
@@ -284,14 +284,14 @@ static func _test_skill_burst_and_defeat_ribbons() -> String:
 
 	var found_burst_ribbon: bool = false
 	for rb in scene._ribbons:
-		if rb["title"] == "Starward Sword":
+		if rb["title"] == "Crimson Nova":
 			found_burst_ribbon = true
 			if not String(rb["sub"]).contains("Elemental Burst"):
 				scene.free()
 				return "Burst ribbon subtitle missing 'Elemental Burst': %s" % rb["sub"]
 	if not found_burst_ribbon:
 		scene.free()
-		return "Burst ribbon for Starward Sword was not created"
+		return "Burst ribbon for Crimson Nova was not created"
 
 	# Verify defeat ribbon
 	var found_defeat_ribbon: bool = false
@@ -344,7 +344,7 @@ static func _test_character_lunge_and_hit_shake() -> String:
 
 	# Present skill and damage
 	var events: Array = [
-		{"kind": "skill", "player": scene.view_player, "char": 0, "skill": "Yunlai Swordsmanship", "skill_kind": "normal"},
+		{"kind": "skill", "player": scene.view_player, "char": 0, "skill": "Flame Strike", "skill_kind": "normal"},
 		{"kind": "damage", "player": 1 - scene.view_player, "char": 0, "amount": 2, "dtype": "Physical", "reaction": null},
 	]
 	scene._present_events(events)
@@ -389,14 +389,15 @@ static func _test_non_blocking_animation_lifecycle() -> String:
 	scene.dice_tray.trigger_roll([0, 1, 2, 3])
 
 	# Verify submitting match lifecycle action executes synchronously without blocking
-	var mull_act := TCGGameState.ActionData.new("mulligan", 0, -1, -1, [0, 1])
+	var fp: int = maxi(0, scene.actor())
+	var mull_act := TCGGameState.ActionData.new("mulligan", fp, -1, -1, [0, 1])
 	var res := scene.lifecycle.submit_action(mull_act)
 	if not bool(res.get("ok", false)):
 		scene.free()
 		return "Submitting action while animations active failed: %s" % str(res.get("error", ""))
 
-	# Confirm player 0 mulligan completed in state
-	if not scene.game_state.players[0].mull_done:
+	# Confirm acting player mulligan completed in state
+	if not scene.game_state.players[fp].mull_done:
 		scene.free()
 		return "Mulligan was blocked or not applied to state"
 

@@ -6,8 +6,8 @@ extends RefCounted
 
 
 static func _start(
-	c0: Array = ["Keqing", "Fischl", "Diluc"],
-	c1: Array = ["Kaeya", "Ganyu", "Xingqiu"],
+	c0: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"],
+	c1: Array = ["Cryo Knight", "Hydro Cleric", "Geo Guardian"],
 	seed_val: int = 1
 ) -> TCGGameState:
 	## Matches `tests/test_engine.py:start()`: reaches action phase, P0 to act, 12 Omni dice each.
@@ -76,26 +76,26 @@ static func run_all_tests() -> Dictionary:
 		["test_swirl_spreads_element_to_other_characters", Callable(TCGRulesTestSuite, "_test_swirl_spreads")],
 		["test_crystallize_gives_shield_to_attacker_side", Callable(TCGRulesTestSuite, "_test_crystallize_shield")],
 		["test_piercing_ignores_shields_and_auras", Callable(TCGRulesTestSuite, "_test_piercing_ignores_shields")],
-		["test_summon_attacks_in_end_phase_and_expires", Callable(TCGRulesTestSuite, "_test_summon_end_phase")],
+		["test_buff_status_and_targeted_heal", Callable(TCGRulesTestSuite, "_test_summon_end_phase")],
 		["test_defeat_forces_choice_and_win_detection", Callable(TCGRulesTestSuite, "_test_defeat_and_win")],
-		["test_pyro_infusion_converts_physical", Callable(TCGRulesTestSuite, "_test_pyro_infusion")],
-		["test_rain_sword_reduces_big_hits_twice", Callable(TCGRulesTestSuite, "_test_rain_sword")],
+		["test_attack_boost_increases_skill_damage", Callable(TCGRulesTestSuite, "_test_pyro_infusion")],
+		["test_guard_stance_reduces_big_hits_twice", Callable(TCGRulesTestSuite, "_test_rain_sword")],
 		["test_clone_is_independent_and_deterministic", Callable(TCGRulesTestSuite, "_test_clone_and_determinism")],
 		["test_engine_announces_phases_and_rounds", Callable(TCGRulesTestSuite, "_test_phase_and_round_events")],
 		["test_presets_are_legal_decks", Callable(TCGRulesTestSuite, "_test_presets_legal")],
 		["test_validation_catches_each_rule", Callable(TCGRulesTestSuite, "_test_deck_validation")],
 		["test_autofill_keeps_partial_and_rejects_illegal", Callable(TCGRulesTestSuite, "_test_autofill_csp")],
 		["test_share_code_roundtrip", Callable(TCGRulesTestSuite, "_test_share_code_roundtrip")],
-		["test_weapon_adds_damage_only_for_matching_type", Callable(TCGRulesTestSuite, "_test_weapon_damage")],
-		["test_new_weapon_replaces_old_and_defeat_removes_equipment", Callable(TCGRulesTestSuite, "_test_weapon_replace_and_defeat")],
-		["test_talent_equips_then_uses_skill_and_passes_turn", Callable(TCGRulesTestSuite, "_test_talent_equip_and_skill")],
-		["test_talent_requires_its_active_character", Callable(TCGRulesTestSuite, "_test_talent_requires_active")],
-		["test_fischl_talent_oz_follow_up_once_per_round", Callable(TCGRulesTestSuite, "_test_fischl_stellar_predator")],
-		["test_gambler_earrings_gives_dice_once_per_round", Callable(TCGRulesTestSuite, "_test_gamblers_earrings")],
-		["test_support_end_phase_effects", Callable(TCGRulesTestSuite, "_test_support_end_phase")],
-		["test_paimon_gives_dice_at_action_start", Callable(TCGRulesTestSuite, "_test_paimon_action_start")],
-		["test_changing_shifts_and_leave_it_to_me", Callable(TCGRulesTestSuite, "_test_changing_shifts_and_leave_it")],
-		["test_resonance_card_and_reflection", Callable(TCGRulesTestSuite, "_test_resonance_and_reflection")],
+		["test_power_boost_applies_next_attack_and_spends_usage", Callable(TCGRulesTestSuite, "_test_weapon_damage")],
+		["test_defeat_clears_character_statuses", Callable(TCGRulesTestSuite, "_test_weapon_replace_and_defeat")],
+		["test_battle_cry_and_skill_boost_stack_round_buffs", Callable(TCGRulesTestSuite, "_test_talent_equip_and_skill")],
+		["test_heal_cards_targeted_and_most_injured", Callable(TCGRulesTestSuite, "_test_talent_requires_active")],
+		["test_energy_charge_and_draw_events", Callable(TCGRulesTestSuite, "_test_fischl_stellar_predator")],
+		["test_shield_cards_block_incoming_damage", Callable(TCGRulesTestSuite, "_test_gamblers_earrings")],
+		["test_hydro_cleric_heals_most_injured_ally", Callable(TCGRulesTestSuite, "_test_support_end_phase")],
+		["test_geo_guardian_shields_and_petrifies", Callable(TCGRulesTestSuite, "_test_paimon_action_start")],
+		["test_anemo_scout_skill_forces_switch", Callable(TCGRulesTestSuite, "_test_changing_shifts_and_leave_it")],
+		["test_quick_rally_zero_cost_draw_and_status_reduce", Callable(TCGRulesTestSuite, "_test_resonance_and_reflection")],
 		["test_preview_skill_and_card_no_mutation", Callable(TCGRulesTestSuite, "_test_preview_skill_and_card_no_mutation")],
 	]
 
@@ -206,16 +206,17 @@ static func _test_burst_needs_full_energy() -> String:
 	var s := _start()
 	if _find_skill_action(s, 2) != null:
 		return "Burst should not be legal at 0 energy"
-	s.players[0].characters[0].energy = 3
+	var max_e: int = s.players[0].characters[0].get_defn().max_energy
+	s.players[0].characters[0].energy = max_e
 	var burst_act := _find_skill_action(s, 2)
 	if burst_act == null:
-		return "Burst should be legal at 3 energy"
+		return "Burst should be legal at %d energy" % max_e
 	TCGRulesEngine.apply_action(s, burst_act)
 	if s.players[0].characters[0].energy != 0:
 		return "Energy should be 0 after burst"
 	var hps := [s.players[1].characters[0].hp, s.players[1].characters[1].hp, s.players[1].characters[2].hp]
-	if hps != [6, 7, 7]:
-		return "Expected foe HPs [6, 7, 7], got %s" % str(hps)
+	if hps != [6, 8, 8]:
+		return "Expected foe HPs [6, 8, 8], got %s" % str(hps)
 	return ""
 
 
@@ -357,7 +358,7 @@ static func _test_crystallize_shield() -> String:
 
 static func _test_piercing_ignores_shields() -> String:
 	var s := _start()
-	s.players[1].combat.append(TCGPlayerSystem.StatusInstance.new("Jade Shield", -1, -1, 2))
+	s.players[1].combat.append(TCGPlayerSystem.StatusInstance.new("Shield +2", -1, -1, 2))
 	s.players[1].characters[0].aura = CardDataSystem.PYRO
 	_hit(s, 0, 2, CardDataSystem.PIERCING)
 	if s.players[1].characters[0].hp != 8 or s.players[1].characters[0].aura != CardDataSystem.PYRO:
@@ -367,17 +368,17 @@ static func _test_piercing_ignores_shields() -> String:
 
 static func _test_summon_end_phase() -> String:
 	var s := _start()
-	TCGEffectContext.new(s, 0).summon("Oz")
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	if s.players[1].characters[0].hp != 9 or s.players[0].summons[0].usages != 1:
-		return "Oz should deal 1 damage and have 1 usage left"
-	while s.phase != "action":
-		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", s.current))
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", s.current))
-	if not s.players[0].summons.is_empty():
-		return "Oz should expire after 2 usages"
+	_give(s, 0, ["Power Boost", "Major Heal"])
+	s.players[0].characters[1].hp = 7
+	_play_card(s, "Major Heal", 1)
+	if s.players[0].characters[1].hp != 9 or s.current != 0:
+		return "Major Heal should heal char 1 from 7 to 9 as a Fast Action"
+	_play_card(s, "Power Boost")
+	if TCGRulesEngine.find_status(s.players[0].combat, "Next Attack +2") == null:
+		return "Power Boost should attach Next Attack +2 status"
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
+	if s.players[1].characters[0].hp != 6 or TCGRulesEngine.find_status(s.players[0].combat, "Next Attack +2") != null:
+		return "Power Boost should deal +2 Normal Attack DMG (HP 6) and consume Next Attack +2"
 	return ""
 
 
@@ -398,23 +399,26 @@ static func _test_defeat_and_win() -> String:
 
 static func _test_pyro_infusion() -> String:
 	var s := _start()
-	TCGRulesEngine.add_status(s.players[0].characters[2].statuses, "Pyro Infusion")
-	s.players[0].active = 2
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
-	if s.players[1].characters[0].aura != CardDataSystem.PYRO:
-		return "Pyro Infusion should convert Physical normal attack to Pyro"
+	_give(s, 0, ["Battle Cry"])
+	_play_card(s, "Battle Cry")
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+	if s.players[1].characters[0].hp != 6:
+		return "Attack +1 should add +1 DMG to Shock Arrow (HP 6), got %d" % s.players[1].characters[0].hp
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") != null:
+		return "Attack +1 should expire at End Phase"
 	return ""
 
 
 static func _test_rain_sword() -> String:
-	var s := _start(["Xingqiu", "Fischl", "Diluc"], ["Kaeya", "Ganyu", "Xingqiu"])
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	var s := _start()
+	TCGRulesEngine.add_status(s.players[0].combat, "Guard Stance")
 	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
-	_hit(s, 0, 1, CardDataSystem.PHYSICAL, 0)
 	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
-	if s.players[0].characters[0].hp != 5 or not s.players[0].combat.is_empty():
-		return "Rain Sword should reduce the two 3-damage hits by 1 each and expire"
+	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
+	if s.players[0].characters[0].hp != 3 or not s.players[0].combat.is_empty():
+		return "Guard Stance should reduce two hits by 1 each (HP 3) and expire"
 	return ""
 
 
@@ -426,8 +430,8 @@ static func _test_clone_and_determinism() -> String:
 		return "Cloned state mutation leaked to original state"
 
 	# Determinism check with identical seed
-	var g1 := TCGRulesEngine.new_game(["Keqing", "Mona", "Zhongli"], CardDataSystem.starter_deck(), ["Diluc", "Sucrose", "Ganyu"], CardDataSystem.starter_deck(), 42)
-	var g2 := TCGRulesEngine.new_game(["Keqing", "Mona", "Zhongli"], CardDataSystem.starter_deck(), ["Diluc", "Sucrose", "Ganyu"], CardDataSystem.starter_deck(), 42)
+	var g1 := TCGRulesEngine.new_game(["Electro Ranger", "Hydro Cleric", "Geo Guardian"], CardDataSystem.starter_deck(), ["Pyro Vanguard", "Anemo Scout", "Cryo Knight"], CardDataSystem.starter_deck(), 42)
+	var g2 := TCGRulesEngine.new_game(["Electro Ranger", "Hydro Cleric", "Geo Guardian"], CardDataSystem.starter_deck(), ["Pyro Vanguard", "Anemo Scout", "Cryo Knight"], CardDataSystem.starter_deck(), 42)
 	for _step in range(25):
 		if g1.phase == "over":
 			break
@@ -460,8 +464,8 @@ static func _test_phase_and_round_events() -> String:
 
 static func _test_presets_legal() -> String:
 	var presets := TCGDeckSystem.preset_decks()
-	if presets.size() != 6:
-		return "Expected 6 presets, got %d" % presets.size()
+	if presets.is_empty() or presets.size() != CardDataSystem.preset_defs.size():
+		return "Expected %d presets, got %d" % [CardDataSystem.preset_defs.size(), presets.size()]
 	for name in presets.keys():
 		var pair: Array = presets[name]
 		var errs := TCGDeckSystem.validate_deck(pair[0], pair[1])
@@ -471,199 +475,177 @@ static func _test_presets_legal() -> String:
 
 
 static func _test_deck_validation() -> String:
-	var chars := ["Keqing", "Fischl", "Diluc"]
+	var chars := ["Pyro Vanguard", "Electro Ranger", "Cryo Knight"]
 	var good: Array[String] = TCGDeckSystem.autofill(chars)
 	if not TCGDeckSystem.validate_deck(chars, good).is_empty():
 		return "autofill deck should be valid"
-	var short_deck := good.slice(0, 29)
+	var short_deck := good.slice(0, TCGDeckSystem.DECK_SIZE - 1)
 	if TCGDeckSystem.validate_deck(chars, short_deck).is_empty():
-		return "29-card deck should fail validation"
-	var wrong_talent := good.duplicate()
-	wrong_talent[0] = "Undivided Heart"
-	if TCGDeckSystem.validate_deck(chars, wrong_talent).is_empty():
-		return "Wrong character talent should fail validation"
-	var wrong_weapon := good.duplicate()
-	wrong_weapon[0] = "White Tassel"
-	if TCGDeckSystem.validate_deck(chars, wrong_weapon).is_empty():
-		return "Polearm without polearm user should fail validation"
-	var wrong_res := good.duplicate()
-	wrong_res[0] = "Elemental Resonance: Fervent Flames"
-	if TCGDeckSystem.validate_deck(chars, wrong_res).is_empty():
-		return "Pyro resonance with only 1 Pyro character should fail validation"
+		return "%d-card deck should fail validation" % (TCGDeckSystem.DECK_SIZE - 1)
+	var too_many := good.duplicate()
+	for idx in range(TCGDeckSystem.MAX_COPIES + 1):
+		too_many[idx] = "Power Boost"
+	if TCGDeckSystem.validate_deck(chars, too_many).is_empty():
+		return "Exceeding MAX_COPIES should fail validation"
+	if TCGDeckSystem.validate_deck(["UnknownHero", "Electro Ranger", "Cryo Knight"], good).is_empty():
+		return "Unknown character should fail validation"
 	return ""
 
 
 static func _test_autofill_csp() -> String:
-	var chars := ["Mona", "Sucrose", "Zhongli"]
-	var partial := ["Magic Guide", "Magic Guide", "Chaotic Entropy"]
+	var chars := ["Hydro Cleric", "Anemo Scout", "Geo Guardian"]
+	var partial := ["Power Boost", "Power Boost", "Tactical Draw"]
 	var a = TCGDeckSystem.autofill(chars, partial)
 	var b = TCGDeckSystem.autofill(chars, partial)
 	if a == null or a != b or not TCGDeckSystem.validate_deck(chars, a).is_empty():
-		return "autofill should be deterministic and produce a valid 30-card deck"
-	if TCGDeckSystem.autofill(["Keqing", "Fischl", "Diluc"], ["Undivided Heart"]) != null:
+		return "autofill should be deterministic and produce a valid %d-card deck" % TCGDeckSystem.DECK_SIZE
+	if TCGDeckSystem.autofill(["Pyro Vanguard", "Electro Ranger", "Cryo Knight"], ["Nonexistent Card"]) != null:
 		return "autofill should return null for illegal partial deck"
-	if TCGDeckSystem.autofill(["Keqing", "Fischl", "Diluc"], ["Paimon", "Paimon", "Paimon"]) != null:
-		return "autofill should return null for >2 copies in partial deck"
+	var over_cap: Array[String] = []
+	for _i in range(TCGDeckSystem.MAX_COPIES + 1):
+		over_cap.append("Power Boost")
+	if TCGDeckSystem.autofill(["Pyro Vanguard", "Electro Ranger", "Cryo Knight"], over_cap) != null:
+		return "autofill should return null when exceeding MAX_COPIES in partial deck"
 	return ""
 
 
 static func _test_share_code_roundtrip() -> String:
 	var presets := TCGDeckSystem.preset_decks()
-	var melt: Array = presets["Melt Burst"]
-	var code := TCGDeckSystem.encode(melt[0], melt[1])
+	var key0: String = str(presets.keys()[0])
+	var p0: Array = presets[key0]
+	var code := TCGDeckSystem.encode(p0[0], p0[1])
 	var decoded := TCGDeckSystem.decode(code)
-	var sorted_cards: Array[String] = (melt[1] as Array[String]).duplicate()
+	var sorted_cards: Array[String] = (p0[1] as Array[String]).duplicate()
 	sorted_cards.sort()
-	if decoded.size() != 2 or decoded[0] != melt[0] or decoded[1] != sorted_cards:
+	if decoded.size() != 2 or decoded[0] != p0[0] or decoded[1] != sorted_cards:
 		return "Share code roundtrip mismatch"
 	return ""
 
 
 static func _test_weapon_damage() -> String:
 	var s := _start()
-	_give(s, 0, ["Traveler's Handy Sword", "Raven Bow"])
-	var bow_targets: Array[int] = []
-	for a in TCGRulesEngine.legal_actions(s):
-		if a.type == "card" and s.players[0].hand[a.index] == "Raven Bow":
-			bow_targets.append(a.target)
-	if bow_targets != [1]:
-		return "Only Fischl (index 1) should be a valid target for Raven Bow"
-	_play_card(s, "Traveler's Handy Sword", 0)
+	_give(s, 0, ["Power Boost"])
+	_play_card(s, "Power Boost")
 	if s.current != 0:
-		return "Equipping weapon should be a Fast Action"
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+		return "Power Boost should be a Fast Action"
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
 	if s.players[1].characters[0].hp != 6:
-		return "Expected weapon to add +1 skill damage (HP 6), got %d" % s.players[1].characters[0].hp
+		return "Expected Power Boost to add +2 DMG to first Normal Attack (HP 6), got %d" % s.players[1].characters[0].hp
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
+	if s.players[1].characters[0].hp != 4:
+		return "Second Normal Attack should deal base 2 DMG (HP 4), got %d" % s.players[1].characters[0].hp
 	return ""
 
 
 static func _test_weapon_replace_and_defeat() -> String:
-	var s := _start(["Keqing", "Xingqiu", "Diluc"])
-	_give(s, 0, ["Traveler's Handy Sword"])
-	_play_card(s, "Traveler's Handy Sword", 0)
-	if s.players[0].characters[0].equipment.get("weapon") != "Traveler's Handy Sword":
-		return "Weapon not equipped"
+	var s := _start()
+	TCGRulesEngine.add_status(s.players[0].characters[0].statuses, "Frozen")
 	_hit(s, 0, 99, CardDataSystem.PHYSICAL, 0)
-	if not s.players[0].characters[0].equipment.is_empty() or not s.players[0].characters[0].statuses.is_empty():
-		return "Defeat should clear equipment and statuses"
+	if not s.players[0].characters[0].defeated or not s.players[0].characters[0].statuses.is_empty():
+		return "Defeat should clear character statuses"
 	return ""
 
 
 static func _test_talent_equip_and_skill() -> String:
 	var s := _start()
-	s.players[0].active = 1
-	_give(s, 0, ["Stellar Predator"])
-	var dice_before: int = s.players[0].dice.size()
-	_play_card(s, "Stellar Predator", 1)
-	var p := s.players[0]
-	if dice_before - p.dice.size() != 3:
-		return "Talent should cost 3 dice"
-	if p.characters[1].equipment.get("talent") != "Stellar Predator":
-		return "Stellar Predator should be equipped"
-	if p.summons.size() != 1 or p.summons[0].name != "Oz" or s.current != 1 or s.players[1].characters[0].hp != 9:
-		return "Talent should immediately execute Nightrider and pass turn"
+	_give(s, 0, ["Battle Cry"])
+	_play_card(s, "Battle Cry")
+	TCGRulesEngine.add_status(s.players[0].combat, "Skill Boost +2")
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+	if s.players[1].characters[0].hp != 4:
+		return "Battle Cry (+1) + Skill Boost +2 should deal 6 Shock Arrow DMG (HP 4), got %d" % s.players[1].characters[0].hp
 	return ""
 
 
 static func _test_talent_requires_active() -> String:
 	var s := _start()
-	_give(s, 0, ["Stellar Predator", "Thundering Penance"])
-	var playable: Array[String] = []
-	for a in TCGRulesEngine.legal_actions(s):
-		if a.type == "card":
-			playable.append(s.players[0].hand[a.index])
-	if playable != ["Thundering Penance"]:
-		return "Only active character's talent should be playable, got %s" % str(playable)
+	s.players[0].characters[0].hp = 9
+	s.players[0].characters[2].hp = 4
+	_give(s, 0, ["Minor Heal", "Team Tonic"])
+	_play_card(s, "Minor Heal", 0)
+	if s.players[0].characters[0].hp != 10:
+		return "Minor Heal should heal targeted char 0 from 9 to 10"
+	_play_card(s, "Team Tonic")
+	if s.players[0].characters[2].hp != 7:
+		return "Team Tonic should heal most injured char 2 from 4 to 7, got %d" % s.players[0].characters[2].hp
 	return ""
 
 
 static func _test_fischl_stellar_predator() -> String:
 	var s := _start()
-	s.players[0].active = 1
-	_give(s, 0, ["Stellar Predator"])
-	_play_card(s, "Stellar Predator", 1)
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
-	if s.players[1].characters[0].hp != 5 or s.players[1].characters[0].aura != CardDataSystem.ELECTRO:
-		return "Expected Oz follow-up after normal attack (HP 5, Electro aura)"
+	_give(s, 0, ["Energy Charge", "Tactical Draw"])
+	var deck_before: int = s.players[0].deck.size()
+	_play_card(s, "Energy Charge")
+	if s.players[0].characters[0].energy != 1:
+		return "Energy Charge should grant 1 Energy"
+	_play_card(s, "Tactical Draw")
+	if s.players[0].deck.size() != deck_before - 2 or s.players[0].hand.size() != 2:
+		return "Tactical Draw should draw 2 cards from deck"
 	return ""
 
 
 static func _test_gamblers_earrings() -> String:
 	var s := _start()
-	_give(s, 0, ["Gambler's Earrings"])
-	_play_card(s, "Gambler's Earrings", 0)
-	s.players[0].dice = []
-	s.players[1].characters[0].hp = 1
-	_hit(s, 0, 5, CardDataSystem.PHYSICAL, 1)
-	_hit(s, 1, 1, CardDataSystem.PHYSICAL, 1)
-	if s.players[0].dice.count(CardDataSystem.OMNI) != 2:
-		return "Gambler's Earrings should grant 2 Omni dice once per round"
+	_give(s, 0, ["Iron Guard", "Fortify"])
+	_play_card(s, "Iron Guard")
+	_hit(s, 0, 5, CardDataSystem.PHYSICAL, 0)
+	if s.players[0].characters[0].hp != 7 or TCGRulesEngine.find_status(s.players[0].combat, "Shield +2") != null:
+		return "Iron Guard (Shield +2) should block 2 of 5 DMG (HP 7) and expire"
+	_play_card(s, "Fortify")
+	_hit(s, 0, 2, CardDataSystem.PHYSICAL, 0)
+	if s.players[0].characters[0].hp != 7:
+		return "Fortify (Shield +3) should fully block 2 DMG"
 	return ""
 
 
 static func _test_support_end_phase() -> String:
-	var s := _start()
-	_give(s, 0, ["Liyue Harbor Wharf", "Wangshu Inn"])
-	s.players[0].characters[1].hp = 4
-	_play_card(s, "Liyue Harbor Wharf")
-	_play_card(s, "Wangshu Inn")
-	var deck_before: int = s.players[0].deck.size()
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	if s.players[0].characters[1].hp != 6:
-		return "Wangshu Inn should heal most injured character by 2"
-	if s.players[0].deck.size() != deck_before - 4:
-		return "Liyue Harbor Wharf + End Phase should draw 4 cards total"
+	var s := _start(["Hydro Cleric", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Geo Guardian"])
+	s.players[0].characters[2].hp = 5
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+	if s.players[1].characters[0].hp != 8 or s.players[0].characters[2].hp != 7:
+		return "Hydro Cleric Refreshing Mist should deal 2 Hydro DMG and heal most injured ally by 2"
 	return ""
 
 
 static func _test_paimon_action_start() -> String:
-	var s := _start()
-	_give(s, 0, ["Paimon"])
-	_play_card(s, "Paimon")
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	var s := _start(["Geo Guardian", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"])
+	s.players[0].characters[0].energy = 2
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+	if s.players[1].characters[0].hp != 8 or TCGRulesEngine.find_status(s.players[0].combat, "Shield +2") == null:
+		return "Geo Guardian Aegis Slam should deal 2 DMG and grant Shield +2"
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	while s.phase != "action":
-		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
-	if s.players[0].dice.size() != 10 or s.players[0].dice.count(CardDataSystem.OMNI) < 2:
-		return "Paimon should grant 2 Omni dice at Action Phase start (10 dice total)"
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	if s.players[1].characters[0].hp != 5 or not TCGRulesEngine.has_status(s.players[1].characters[0], "Petrified"):
+		return "Geo Guardian Earthen Bastion (Ult) should deal 3 Geo DMG and Petrify target"
 	return ""
 
 
 static func _test_changing_shifts_and_leave_it() -> String:
-	var s := _start()
-	_give(s, 0, ["Changing Shifts", "Leave It to Me!"])
-	_play_card(s, "Changing Shifts")
-	_play_card(s, "Leave It to Me!")
-	var n_dice: int = s.players[0].dice.size()
-	for a in TCGRulesEngine.legal_actions(s):
-		if a.type == "switch":
-			TCGRulesEngine.apply_action(s, a)
-			break
-	if s.players[0].dice.size() != n_dice or s.current != 0:
-		return "Switch with Changing Shifts + Leave It to Me! should be free and fast"
+	var s := _start(["Anemo Scout", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"])
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
+	if s.players[1].characters[0].hp != 7 or s.players[1].active != 1:
+		return "Anemo Scout Cyclone Kick should deal 3 Anemo DMG and force opponent switch to index 1"
 	return ""
 
 
 static func _test_resonance_and_reflection() -> String:
 	var s := _start()
-	_give(s, 0, ["Elemental Resonance: Woven Thunder"])
-	_play_card(s, "Elemental Resonance: Woven Thunder")
-	if s.players[0].characters[0].energy != 1:
-		return "Woven Thunder should grant 1 Energy"
-	TCGEffectContext.new(s, 1).combat_status("Reflection")
-	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 1)
-	if s.players[1].characters[0].hp != 8:
-		return "Reflection should reduce damage by 1 (HP 8)"
-	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 1)
-	if s.players[1].characters[0].hp != 5:
-		return "Reflection should be spent after 1 hit"
+	_give(s, 0, ["Quick Rally"])
+	var dice_before: int = s.players[0].dice.size()
+	var deck_before: int = s.players[0].deck.size()
+	_play_card(s, "Quick Rally")
+	if s.players[0].dice.size() != dice_before or s.players[0].deck.size() != deck_before - 1 or s.current != 0:
+		return "Quick Rally should cost 0 dice, draw 1 card, and keep turn"
+	TCGRulesEngine.add_status(s.players[0].combat, "Normal Boost +1")
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
+	if s.players[1].characters[0].hp != 7:
+		return "Normal Boost +1 should boost Volt Shot from 2 to 3 DMG (HP 7)"
 	return ""
 
 
 static func _test_preview_skill_and_card_no_mutation() -> String:
-	var s := _start(["Keqing", "Fischl", "Diluc"], ["Kaeya", "Ganyu", "Xingqiu"])
+	var s := _start(["Electro Ranger", "Pyro Vanguard", "Cryo Knight"], ["Cryo Knight", "Hydro Cleric", "Geo Guardian"])
 	# 1. Normal Attack preview (2 Physical DMG)
 	var prev_na := TCGRulesEngine.preview_skill(s, 0, 0)
 	if not bool(prev_na.get("ok", false)):
@@ -686,7 +668,7 @@ static func _test_preview_skill_and_card_no_mutation() -> String:
 	if s.players[1].characters[0].hp != 10 or s.players[1].characters[0].aura != CardDataSystem.PYRO or s.players[1].active != 0 or s.players[1].combat.size() != 1:
 		return "preview_skill mutated live game state!"
 
-	# 3. Electro-Charged + standby Piercing damage + Talent card preview
+	# 3. Electro-Charged + standby Piercing damage + targeted Heal card preview
 	s.players[1].combat.clear()
 	s.players[1].characters[0].aura = CardDataSystem.HYDRO
 	var prev_ec := TCGRulesEngine.preview_skill(s, 0, 1)
@@ -697,10 +679,12 @@ static func _test_preview_skill_and_card_no_mutation() -> String:
 	if int(f1_ec.get("piercing_dmg", 0)) != 1 or int(f2_ec.get("piercing_dmg", 0)) != 1:
 		return "Expected 1 Piercing DMG on standby foes for Electro-Charged"
 
-	_give(s, 0, ["Thundering Penance"])
-	var prev_card := TCGRulesEngine.preview_card(s, 0, 0, 0)
-	if not bool(prev_card.get("ok", false)) or int(prev_card.get("foe_chars", {}).get(0, {}).get("total_dmg", 0)) != 4 or s.players[0].hand.size() != 1:
-		return "Talent preview_card mismatch or mutated hand: " + str(prev_card)
+	s.players[0].characters[1].hp = 6
+	_give(s, 0, ["Major Heal"])
+	var prev_card := TCGRulesEngine.preview_card(s, 0, 0, 1)
+	var own1_heal: int = int(prev_card.get("own_chars", {}).get(1, {}).get("heal", 0))
+	if not bool(prev_card.get("ok", false)) or own1_heal != 2 or s.players[0].characters[1].hp != 6 or s.players[0].hand.size() != 1:
+		return "Heal card preview_card mismatch or mutated state: " + str(prev_card)
 	return ""
 
 

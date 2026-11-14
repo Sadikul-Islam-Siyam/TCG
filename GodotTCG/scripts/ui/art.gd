@@ -5,18 +5,9 @@ extends RefCounted
 ## status/equipment badges, portrait loader + procedural character fallback art,
 ## parchment card frames, card backs, and dueling mat).
 
-const CHAR_ACCENT: Dictionary = {
-	"Diluc": [Color8(176, 40, 38), Color8(48, 22, 26), Color8(255, 168, 92), "Claymore", "crimson_knight"],
-	"Kaeya": [Color8(46, 98, 156), Color8(22, 38, 68), Color8(180, 232, 255), "Sword", "cavalry_captain"],
-	"Fischl": [Color8(102, 58, 152), Color8(28, 20, 48), Color8(222, 168, 255), "Bow", "prinzessin"],
-	"Sucrose": [Color8(64, 156, 134), Color8(24, 58, 56), Color8(184, 248, 220), "Catalyst", "alchemist"],
-	"Ganyu": [Color8(88, 158, 212), Color8(28, 52, 88), Color8(212, 242, 255), "Bow", "qilin"],
-	"Xingqiu": [Color8(42, 108, 178), Color8(20, 42, 78), Color8(136, 206, 255), "Sword", "guhua"],
-	"Bennett": [Color8(196, 82, 46), Color8(58, 28, 22), Color8(255, 204, 112), "Sword", "adventurer"],
-	"Keqing": [Color8(126, 72, 178), Color8(36, 22, 62), Color8(232, 186, 255), "Sword", "yuheng"],
-	"Mona": [Color8(58, 86, 176), Color8(22, 30, 72), Color8(146, 212, 255), "Catalyst", "astrologist"],
-	"Zhongli": [Color8(168, 122, 52), Color8(48, 36, 20), Color8(255, 216, 116), "Polearm", "rex_lapis"],
-}
+# Optional per-character procedural portrait accent overrides:
+# "Character Name": [top_col, bot_col, glow_col, weapon_type, motif]
+const CHAR_ACCENT: Dictionary = {}
 
 static var _texture_cache: Dictionary = {}
 
@@ -25,16 +16,19 @@ static func clear_cache() -> void:
 	_texture_cache.clear()
 
 
-static func get_character_texture(name: String) -> Texture2D:
-	if _texture_cache.has(name):
-		return _texture_cache[name]
-	var exts: Array[String] = ["jpg", "png", "jpeg", "webp"]
+static func _get_named_texture(folder: String, item_name: String) -> Texture2D:
+	if item_name.is_empty():
+		return null
+	var cache_key := "%s/%s" % [folder, item_name]
+	if _texture_cache.has(cache_key):
+		return _texture_cache[cache_key]
+	var exts: Array[String] = ["png", "jpg", "jpeg", "webp"]
 	for ext in exts:
-		var res_path := "res://assets/characters/%s.%s" % [name, ext]
+		var res_path := "res://assets/%s/%s.%s" % [folder, item_name, ext]
 		if ResourceLoader.exists(res_path):
 			var tex := load(res_path) as Texture2D
 			if tex != null:
-				_texture_cache[name] = tex
+				_texture_cache[cache_key] = tex
 				return tex
 		# Fallback to Image.load_from_file in case asset was copied before import
 		var abs_path := ProjectSettings.globalize_path(res_path)
@@ -42,10 +36,40 @@ static func get_character_texture(name: String) -> Texture2D:
 			var img := Image.load_from_file(abs_path)
 			if img != null and not img.is_empty():
 				var tex := ImageTexture.create_from_image(img)
-				_texture_cache[name] = tex
+				_texture_cache[cache_key] = tex
 				return tex
-	_texture_cache[name] = null
+	_texture_cache[cache_key] = null
 	return null
+
+
+static func get_character_texture(name: String) -> Texture2D:
+	return _get_named_texture("characters", name)
+
+
+static func get_card_texture(name: String) -> Texture2D:
+	return _get_named_texture("cards", name)
+
+
+static func draw_texture_cover(
+	canvas: CanvasItem,
+	tex: Texture2D,
+	rect: Rect2,
+	mod: Color = Color.WHITE,
+	y_bias: float = 0.5
+) -> void:
+	if tex == null or rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var tw: float = tex.get_width()
+	var th: float = tex.get_height()
+	if tw <= 0.0 or th <= 0.0:
+		return
+	var scale_f: float = maxf(rect.size.x / tw, rect.size.y / th)
+	var vis_w: float = rect.size.x / scale_f
+	var vis_h: float = rect.size.y / scale_f
+	var src_x: float = maxf(0.0, (tw - vis_w) * 0.5)
+	var src_y: float = maxf(0.0, (th - vis_h) * y_bias)
+	var src_rect := Rect2(src_x, src_y, vis_w, vis_h)
+	canvas.draw_texture_rect_region(tex, rect, src_rect, mod)
 
 
 static func draw_elem_symbol(
@@ -350,17 +374,8 @@ static func draw_portrait(
 ) -> void:
 	var tex := get_character_texture(name)
 	if tex != null:
-		# Cover-crop scaling matching PythonTCG _load_character_image
-		var tw: float = tex.get_width()
-		var th: float = tex.get_height()
-		var scale_f: float = maxf(rect.size.x / tw, rect.size.y / th)
-		var vis_w: float = rect.size.x / scale_f
-		var vis_h: float = rect.size.y / scale_f
-		var src_x: float = maxf(0.0, (tw - vis_w) * 0.5)
-		var src_y: float = maxf(0.0, (th - vis_h) * 0.2)
-		var src_rect := Rect2(src_x, src_y, vis_w, vis_h)
 		var mod := Color(0.35, 0.35, 0.38, 1.0) if defeated else Color.WHITE
-		canvas.draw_texture_rect_region(tex, rect, src_rect, mod)
+		draw_texture_cover(canvas, tex, rect, mod, 0.2)
 		return
 
 	# Procedural portrait fallback matching PythonTCG art.portrait
@@ -434,12 +449,6 @@ static func draw_portrait(
 		0.55,
 		TCGTheme.shade(ring_col, 0.9)
 	)
-
-	# Labeled placeholder tag when external character portrait file is not present
-	if rect.size.x >= 72.0 and rect.size.y >= 72.0:
-		var tag_rect := Rect2(rect.position.x + 4.0, rect.end.y - 34.0, 54.0, 12.0)
-		TCGTheme.draw_rounded_box(canvas, tag_rect, Color(0.04, 0.06, 0.1, 0.72), TCGTheme.GOLD_D, 3, 1)
-		TCGTheme.draw_text_centered(canvas, "PROC ART", tag_rect.get_center(), 8, TCGTheme.DIM, false, false)
 
 
 

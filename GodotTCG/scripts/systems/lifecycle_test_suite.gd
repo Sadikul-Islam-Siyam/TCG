@@ -45,15 +45,16 @@ static func run_all_tests() -> Dictionary:
 
 
 static func _test_init_and_setup_order() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
-	var c1 := ["Diluc", "Bennett", "Kaeya"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
+	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), 10)
 	if s.phase != "setup" or s.round_number != 1:
 		return "Expected setup phase round 1"
 	var fp: int = s.first_player
 	var sp: int = 1 - fp
-	if s.players[0].hand.size() != 5 or s.players[0].deck.size() != 25:
-		return "Expected 5 hand cards and 25 deck cards on init"
+	var expected_deck := TCGDeckSystem.DECK_SIZE - 5
+	if s.players[0].hand.size() != 5 or s.players[0].deck.size() != expected_deck:
+		return "Expected 5 hand cards and %d deck cards on init" % expected_deck
 	if s.players[0].active != -1 or s.players[1].active != -1:
 		return "Active characters must remain -1 (None) during setup until both choose"
 
@@ -86,16 +87,17 @@ static func _test_init_and_setup_order() -> String:
 
 
 static func _test_mulligan_partial_swap() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 7)
 	var fp: int = s.first_player
-	s.players[fp].hand = ["Sweet Madame", "Strategize", "Paimon", "Starsigns", "Changing Shifts"]
+	s.players[fp].hand = ["Minor Heal", "Tactical Draw", "Power Boost", "Energy Charge", "Quick Rally"]
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("mulligan", fp, -1, -1, [], [0, 2, 4]))
 	if not TCGRulesEngine.last_error.is_empty():
 		return "Unexpected mulligan error: %s" % TCGRulesEngine.last_error
-	if s.players[fp].hand.size() != 5 or s.players[fp].deck.size() != 25:
-		return "Hand and deck sizes must remain 5 and 25 after mulligan"
-	if s.players[fp].hand[0] != "Strategize" or s.players[fp].hand[1] != "Starsigns":
+	var expected_deck := TCGDeckSystem.DECK_SIZE - 5
+	if s.players[fp].hand.size() != 5 or s.players[fp].deck.size() != expected_deck:
+		return "Hand and deck sizes must remain 5 and %d after mulligan" % expected_deck
+	if s.players[fp].hand[0] != "Tactical Draw" or s.players[fp].hand[1] != "Energy Charge":
 		return "Unselected hand cards should remain in order at the front of hand"
 	# Second mulligan by same player must be rejected
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("mulligan", fp))
@@ -105,7 +107,7 @@ static func _test_mulligan_partial_swap() -> String:
 
 
 static func _test_roll_phase_and_reroll() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 12)
 	# Complete setup
 	for _i in range(4):
@@ -138,7 +140,7 @@ static func _test_roll_phase_and_reroll() -> String:
 
 
 static func _test_zero_dice_boundary() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
@@ -154,7 +156,7 @@ static func _test_zero_dice_boundary() -> String:
 
 
 static func _test_first_ender_priority() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
@@ -183,17 +185,17 @@ static func _test_first_ender_priority() -> String:
 
 
 static func _test_end_phase_full_sequence() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
-	var c1 := ["Diluc", "Bennett", "Kaeya"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
+	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), 5)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
-	# Apply Frozen to P0 active, Petrified to P1 active, Pyro Infusion (duration=2) to P0 active, Stellar Predator (per_round=1, usages=0) to P0
+	# Apply Frozen to P0 active, Petrified to P1 active, Attack +1 (duration=1) and Attack +2 (set duration=2) to P0 combat
 	TCGRulesEngine.add_status(s.players[0].characters[0].statuses, "Frozen")
 	TCGRulesEngine.add_status(s.players[1].characters[0].statuses, "Petrified")
-	var pyro_inf := TCGRulesEngine.add_status(s.players[0].characters[0].statuses, "Pyro Infusion")
-	var sp_st := TCGRulesEngine.add_status(s.players[0].characters[1].statuses, "Stellar Predator")
-	sp_st.usages = 0
+	TCGRulesEngine.add_status(s.players[0].combat, "Attack +1")
+	var atk2 := TCGRulesEngine.add_status(s.players[0].combat, "Attack +2")
+	atk2.duration = 2
 
 	# End round for both players
 	var a0 := TCGRulesEngine.actor(s)
@@ -204,15 +206,15 @@ static func _test_end_phase_full_sequence() -> String:
 		return "Frozen must be removed at End Phase"
 	if TCGRulesEngine.has_status(s.players[1].characters[0], "Petrified"):
 		return "Petrified must be removed at End Phase"
-	if pyro_inf.duration != 1:
-		return "Pyro Infusion duration should tick from 2 to 1"
-	if sp_st.usages != 1:
-		return "per_round status usages should reset to 1 at End Phase"
+	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") != null:
+		return "Attack +1 (duration=1) should expire at End Phase"
+	if atk2.duration != 1:
+		return "Attack +2 duration should tick from 2 to 1"
 	return ""
 
 
 static func _test_resource_caps() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
@@ -225,20 +227,22 @@ static func _test_resource_caps() -> String:
 	TCGEffectContext.new(s, 0).draw(10)
 	if s.players[0].hand.size() != 10:
 		return "Hand must be capped at MAX_HAND (10), got %d" % s.players[0].hand.size()
-	# Test MAX_SUMMONS = 4 replacement of oldest summon
+	# Simplified mode disables summons (MAX_SUMMONS == 0) and stacks shields up to max_shield
 	var ctx := TCGEffectContext.new(s, 0)
 	ctx.summon("Oz")
-	ctx.summon("Icicle")
-	ctx.summon("Sacred Cryo Pearl")
-	ctx.summon("Large Wind Spirit")
-	ctx.summon("Stone Stele")
-	if s.players[0].summons.size() != 4 or s.players[0].summons[0].name != "Icicle" or s.players[0].summons[3].name != "Stone Stele":
-		return "5th summon should evict oldest summon ('Oz')"
+	if not s.players[0].summons.is_empty():
+		return "Summons must remain empty when MAX_SUMMONS == 0"
+	ctx.combat_status("Shield +2")
+	ctx.combat_status("Shield +2")
+	ctx.combat_status("Shield +2")
+	var sh := TCGRulesEngine.find_status(s.players[0].combat, "Shield +2")
+	if sh == null or sh.shield != 4:
+		return "Shield +2 should stack up to max_shield (4)"
 	return ""
 
 
 static func _test_invalid_phase_and_timing() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 2)
 	var fp: int = s.first_player
 
@@ -281,7 +285,7 @@ static func _test_invalid_phase_and_timing() -> String:
 
 
 static func _test_simultaneous_tie() -> String:
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
 	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
 	for p in s.players:
 		for ch in p.characters:
@@ -295,8 +299,8 @@ static func _test_simultaneous_tie() -> String:
 
 static func _test_lifecycle_controller() -> String:
 	var lc := TCGMatchLifecycle.new()
-	var c0 := ["Keqing", "Fischl", "Xingqiu"]
-	var c1 := ["Diluc", "Bennett", "Kaeya"]
+	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
+	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
 	var bot0 := TCGRandomAI.new(10)
 	var bot1 := TCGRandomAI.new(11)
 	lc.start_match(c0, TCGDeckSystem.build_preset(c0), c1, TCGDeckSystem.build_preset(c1), 10, [bot0, bot1])

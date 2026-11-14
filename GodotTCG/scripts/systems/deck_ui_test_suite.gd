@@ -15,7 +15,7 @@ static func run_all_tests() -> Dictionary:
 		["test_deck_store_overwrite_and_corrupt_json_resilience", Callable(TCGDeckUITestSuite, "_test_deck_store_edge_cases")],
 		["test_deck_builder_character_toggle_prunes_illegal_cards", Callable(TCGDeckUITestSuite, "_test_builder_prune")],
 		["test_deck_builder_add_remove_and_max_copies", Callable(TCGDeckUITestSuite, "_test_builder_add_remove")],
-		["test_deck_builder_autofill_produces_legal_30_card_deck", Callable(TCGDeckUITestSuite, "_test_builder_autofill")],
+		["test_deck_builder_autofill_produces_legal_deck", Callable(TCGDeckUITestSuite, "_test_builder_autofill")],
 		["test_deck_builder_filters_tabs_and_search", Callable(TCGDeckUITestSuite, "_test_builder_filters")],
 		["test_deck_builder_share_code_export_and_import", Callable(TCGDeckUITestSuite, "_test_builder_share_import")],
 		["test_deck_builder_load_modal_and_scroll", Callable(TCGDeckUITestSuite, "_test_builder_load_modal_scroll")],
@@ -54,17 +54,17 @@ static func _with_temp_store(fn: Callable) -> void:
 static func _test_deck_store() -> void:
 	_with_temp_store(func() -> void:
 		assert(TCGDeckStore.list_decks().is_empty())
-		assert(not TCGDeckStore.save_deck("   ", ["Diluc", "Kaeya", "Fischl"], []))
+		assert(not TCGDeckStore.save_deck("   ", ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"], []))
 
-		var draft_cards: Array[String] = ["Paimon", "Strategize"]
-		assert(TCGDeckStore.save_deck("Draft One", ["Diluc", "Kaeya", "Fischl"], draft_cards))
+		var draft_cards: Array[String] = ["Power Boost", "Tactical Draw"]
+		assert(TCGDeckStore.save_deck("Draft One", ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"], draft_cards))
 		var listed := TCGDeckStore.list_decks()
 		assert(listed.size() == 1)
 		assert(listed[0]["name"] == "Draft One")
 		assert(not bool(listed[0]["legal"]))
 
-		var legal_cards: Array[String] = TCGDeckSystem.build_preset(["Diluc", "Kaeya", "Fischl"])
-		assert(TCGDeckStore.save_deck("Legal Deck", ["Diluc", "Kaeya", "Fischl"], legal_cards))
+		var legal_cards: Array[String] = TCGDeckSystem.build_preset(["Pyro Vanguard", "Cryo Knight", "Electro Ranger"])
+		assert(TCGDeckStore.save_deck("Legal Deck", ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"], legal_cards))
 		listed = TCGDeckStore.list_decks()
 		assert(listed.size() == 2)
 		assert(bool(listed[1]["legal"]))
@@ -77,68 +77,68 @@ static func _test_deck_store() -> void:
 
 static func _test_builder_prune() -> void:
 	var db := TCGDeckBuilderScene.new()
-	db.chars = ["Diluc", "Kaeya", "Fischl"]
-	db.add_card("Flowing Flame")   # Diluc talent
-	db.add_card("Cold-Blooded Strike")   # Kaeya talent
+	db.chars = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
+	db.add_card("Minor Heal")
+	db.add_card("Power Boost")
 	assert(db.total() == 2)
 
-	# Removing Diluc must prune Diluc's talent card, keeping Kaeya's
-	db.toggle_char("Diluc")
-	assert(db.chars == ["Kaeya", "Fischl"])
-	assert(not db.counts.has("Flowing Flame"))
-	assert(db.counts.get("Cold-Blooded Strike", 0) == 1)
+	# Removing a character still leaves valid generic Heal/Buff cards in deck
+	db.toggle_char("Pyro Vanguard")
+	assert(db.chars == ["Cryo Knight", "Electro Ranger"])
+	assert(db.counts.get("Minor Heal", 0) == 1)
+	assert(db.counts.get("Power Boost", 0) == 1)
 	db.free()
 
 
 static func _test_builder_add_remove() -> void:
 	var db := TCGDeckBuilderScene.new()
-	db.chars = ["Keqing", "Fischl", "Xingqiu"]
-	db.add_card("Strategize")
-	db.add_card("Strategize")
-	db.add_card("Strategize")   # 3rd copy should be rejected (MAX_COPIES = 2)
-	assert(int(db.counts.get("Strategize", 0)) == 2)
-	assert(db.total() == 2)
+	db.chars = ["Pyro Vanguard", "Electro Ranger", "Hydro Cleric"]
+	for _i in range(TCGDeckSystem.MAX_COPIES + 1):
+		db.add_card("Tactical Draw")
+	assert(int(db.counts.get("Tactical Draw", 0)) == TCGDeckSystem.MAX_COPIES)
+	assert(db.total() == TCGDeckSystem.MAX_COPIES)
 
-	db.remove_card("Strategize")
-	assert(int(db.counts.get("Strategize", 0)) == 1)
-	db.remove_card("Strategize")
-	assert(not db.counts.has("Strategize"))
+	db.remove_card("Tactical Draw")
+	assert(int(db.counts.get("Tactical Draw", 0)) == TCGDeckSystem.MAX_COPIES - 1)
+	for _i in range(TCGDeckSystem.MAX_COPIES - 1):
+		db.remove_card("Tactical Draw")
+	assert(not db.counts.has("Tactical Draw"))
 	db.free()
 
 
 static func _test_builder_autofill() -> void:
 	var db := TCGDeckBuilderScene.new()
-	db.chars = ["Diluc", "Bennett", "Xingqiu"]
-	db.add_card("Paimon")
+	db.chars = ["Pyro Vanguard", "Hydro Cleric", "Geo Guardian"]
+	db.add_card("Power Boost")
 	db.press("fill")
-	assert(db.total() == 30)
+	assert(db.total() == TCGDeckSystem.DECK_SIZE)
 	var val: Dictionary = db.validation()
-	assert(bool(val["ok"]), "Autofill should produce a legal 30-card deck: %s" % str(val["messages"]))
+	assert(bool(val["ok"]), "Autofill should produce a legal %d-card deck: %s" % [TCGDeckSystem.DECK_SIZE, str(val["messages"])])
 	db.free()
 
 
 static func _test_builder_filters() -> void:
 	var db := TCGDeckBuilderScene.new()
-	db.chars = ["Diluc", "Bennett", "Xingqiu"]
-	db.tab = "Weapon"
-	var weapons := db.visible_cards()
-	assert(not weapons.is_empty())
-	for w in weapons:
-		assert(CardDataSystem.get_card_def(w).kind == "weapon")
+	db.chars = ["Pyro Vanguard", "Electro Ranger", "Hydro Cleric"]
+	db.tab = "Heal"
+	var heals := db.visible_cards()
+	assert(not heals.is_empty())
+	for h in heals:
+		assert(CardDataSystem.infer_card_role(CardDataSystem.get_card_def(h)) == "heal")
 
 	db.tab = "All"
-	db.search_query = "Paimon"
+	db.search_query = "Power"
 	var searched := db.visible_cards()
-	assert(searched == ["Paimon"])
+	assert(searched == ["Power Boost"])
 	db.free()
 
 
 static func _test_builder_share_import() -> void:
 	var db := TCGDeckBuilderScene.new()
 	db._ready()
-	db.chars = ["Keqing", "Fischl", "Mona"]
+	db.chars = ["Pyro Vanguard", "Electro Ranger", "Hydro Cleric"]
 	db.press("fill")
-	assert(db.total() == 30)
+	assert(db.total() == TCGDeckSystem.DECK_SIZE)
 	var orig_cards: Array[String] = db.cards()
 	db.press("share")
 	assert(str(db.modal.get("kind", "")) == "share")
@@ -154,23 +154,25 @@ static func _test_builder_share_import() -> void:
 	db._import_edit.text = code
 	db.press("do_import")
 	assert(db.modal.is_empty())
-	assert(db.chars == ["Keqing", "Fischl", "Mona"])
+	assert(db.chars == ["Pyro Vanguard", "Electro Ranger", "Hydro Cleric"])
 	assert(db.cards() == orig_cards)
 	db.free()
 
 
 static func _test_deck_select_entries() -> void:
 	_with_temp_store(func() -> void:
-		TCGDeckStore.save_deck("Incomplete Draft", ["Diluc", "Kaeya", "Fischl"], ["Paimon"])
+		TCGDeckStore.save_deck("Incomplete Draft", ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"], ["Power Boost"])
 		var ds := TCGDeckSelectScene.new()
 		ds.setup_mode("pve")
-		# Entry 0 = Random, Entries 1..6 = 6 Presets, Entry 7 = Incomplete Draft
-		assert(ds.entries.size() == 8)
+		var n_presets := CardDataSystem.preset_defs.size()
+		var draft_idx := 1 + n_presets
+		# Entry 0 = Random, Entries 1..N = Presets, last entry = Incomplete Draft
+		assert(ds.entries.size() == draft_idx + 1)
 		assert(bool(ds.entries[0]["is_random"]))
-		assert(not bool(ds.entries[7]["legal"]))
+		assert(not bool(ds.entries[draft_idx]["legal"]))
 
 		# Selecting incomplete draft must be rejected and keep previous pick
-		ds.press(["pick", 0, 7])
+		ds.press(["pick", 0, draft_idx])
 		assert(ds.pick[0] == 0)
 		assert(not ds.msg.is_empty())
 
@@ -217,12 +219,14 @@ static func _test_deck_select_launch() -> void:
 
 static func _test_deck_store_edge_cases() -> void:
 	_with_temp_store(func() -> void:
-		var legal_a: Array[String] = TCGDeckSystem.build_preset(["Diluc", "Kaeya", "Fischl"])
-		var legal_b: Array[String] = TCGDeckSystem.build_preset(["Keqing", "Fischl", "Mona"])
-		assert(TCGDeckStore.save_deck("Alpha", ["Diluc", "Kaeya", "Fischl"], legal_a))
-		assert(TCGDeckStore.save_deck("Alpha", ["Keqing", "Fischl", "Mona"], legal_b))
+		var team_a: Array[String] = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
+		var team_b: Array[String] = ["Electro Ranger", "Hydro Cleric", "Geo Guardian"]
+		var legal_a: Array[String] = TCGDeckSystem.build_preset(team_a)
+		var legal_b: Array[String] = TCGDeckSystem.build_preset(team_b)
+		assert(TCGDeckStore.save_deck("Alpha", team_a, legal_a))
+		assert(TCGDeckStore.save_deck("Alpha", team_b, legal_b))
 		var listed := TCGDeckStore.list_decks()
-		assert(listed.size() == 1 and listed[0]["chars"] == ["Keqing", "Fischl", "Mona"])
+		assert(listed.size() == 1 and listed[0]["chars"] == team_b)
 
 		# Corrupt JSON must not crash list_decks()
 		var f := FileAccess.open("user://test_stage9_decks.json", FileAccess.WRITE)
@@ -232,7 +236,7 @@ static func _test_deck_store_edge_cases() -> void:
 
 		# Non-array JSON & malformed objects must be ignored
 		var f2 := FileAccess.open("user://test_stage9_decks.json", FileAccess.WRITE)
-		f2.store_string("[{\"oops\":1}, {\"name\":\"Valid\",\"chars\":[\"Diluc\"],\"cards\":[]}]")
+		f2.store_string("[{\"oops\":1}, {\"name\":\"Valid\",\"chars\":[\"Pyro Vanguard\"],\"cards\":[]}]")
 		f2.close()
 		listed = TCGDeckStore.list_decks()
 		assert(listed.size() == 1 and listed[0]["name"] == "Valid")
@@ -241,17 +245,18 @@ static func _test_deck_store_edge_cases() -> void:
 
 static func _test_builder_load_modal_scroll() -> void:
 	_with_temp_store(func() -> void:
-		for i in range(8):
-			assert(TCGDeckStore.save_deck("Custom_%02d" % i, ["Diluc", "Kaeya", "Fischl"], ["Paimon"]))
+		for i in range(11):
+			assert(TCGDeckStore.save_deck("Custom_%02d" % i, ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"], ["Power Boost"]))
 		var db := TCGDeckBuilderScene.new()
 		db._ready()
 		db.press("load")
 		assert(str(db.modal.get("kind", "")) == "load")
 		var entries := db._build_load_entries()
-		assert(entries.size() == 14)   # 8 saved + 6 presets
-		db.modal_scroll = 5
+		var expected_total := 11 + CardDataSystem.preset_defs.size()
+		assert(entries.size() == expected_total)
+		db.modal_scroll = expected_total
 		db._register_modal_hitboxes()
-		assert(db.modal_scroll == 2)   # Clamped to 14 - 12 = 2
+		assert(db.modal_scroll == expected_total - 12)
 		db.press("close")
 		assert(db.modal.is_empty())
 		db.free()

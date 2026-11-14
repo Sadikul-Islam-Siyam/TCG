@@ -95,18 +95,12 @@ func _draw() -> void:
 		70
 	)
 
-	var header_txt := "COMBAT LOG (%d)" % log_entries.size()
-	TCGTheme.draw_text_pos(self, header_txt, Vector2(12, 8), 14, TCGTheme.GOLD_L if expanded else TCGTheme.GOLD, true, true)
+	var header_txt := "LOG (%d)" % log_entries.size()
+	TCGTheme.draw_text_pos(self, header_txt, Vector2(12, 16 if _anim_open < 0.15 else 8), 14, TCGTheme.GOLD_L if expanded else TCGTheme.GOLD, true, true)
 	var chev := "▾" if expanded else "▸"
-	TCGTheme.draw_text_pos(self, chev, Vector2(r.size.x - 20, 7), 15, TCGTheme.GOLD_L, true, false)
+	TCGTheme.draw_text_pos(self, chev, Vector2(r.size.x - 20, 15 if _anim_open < 0.15 else 7), 15, TCGTheme.GOLD_L, true, false)
 
 	if _anim_open < 0.15:
-		# Compact single latest line preview
-		if not log_entries.is_empty():
-			var last_e := log_entries[log_entries.size() - 1]
-			var st := _entry_style(last_e)
-			var short_txt := last_e if last_e.length() <= 24 else last_e.substr(0, 23) + "…"
-			TCGTheme.draw_text_pos(self, "%s %s" % [String(st["badge"]), short_txt], Vector2(12, 29), 11, st["color"], false, false)
 		return
 
 	draw_line(Vector2(8, 32), Vector2(r.size.x - 8, 32), TCGTheme.GOLD_D, 1.0)
@@ -122,8 +116,3 @@ func _draw() -> void:
 			short_txt = short_txt.substr(0, 35) + "…"
 		TCGTheme.draw_text_pos(self, "%s %s" % [String(st["badge"]), short_txt], Vector2(12, y), 13, st["color"], false, false)
 		y += 24.0
-		if short_txt.length() > 35:
-			short_txt = short_txt.substr(0, 34) + "…"
-		TCGTheme.draw_text_pos(self, String(st["badge"]), Vector2(10, y), 10, st["color"], true, false)
-		TCGTheme.draw_text_pos(self, short_txt, Vector2(22, y), 10, st["color"], false, true)
-		y += 21.0

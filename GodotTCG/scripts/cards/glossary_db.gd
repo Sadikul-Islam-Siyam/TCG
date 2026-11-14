@@ -54,7 +54,7 @@ const KEYWORD_ENTRIES: Dictionary = {
 	},
 	"Fast Action": {
 		"title": "Fast Action",
-		"body": "Keeps your turn active so you can take another action immediately. Most Event, Support, and Equipment cards are Fast Actions.",
+		"body": "Keeps your turn active so you can take another action immediately. Most Event cards are Fast Actions.",
 	},
 	"Elemental Tuning": {
 		"title": "Elemental Tuning",
@@ -82,7 +82,7 @@ const KEYWORD_ENTRIES: Dictionary = {
 	},
 	"Usage(s)": {
 		"title": "Usage(s)",
-		"body": "Remaining activations before this Summon, Support, or Combat Status expires.",
+		"body": "Remaining activations before this status expires.",
 	},
 	"Energy": {
 		"title": "Energy",

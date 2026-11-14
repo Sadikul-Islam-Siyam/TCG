@@ -43,10 +43,6 @@ var _last_match_config: Dictionary = {}
 # Reusable Child Components
 var own_hud: TCGPlayerHudBanner = null
 var foe_hud: TCGPlayerHudBanner = null
-var own_supports_grid: TCGZoneGrid = null
-var own_summons_grid: TCGZoneGrid = null
-var foe_supports_grid: TCGZoneGrid = null
-var foe_summons_grid: TCGZoneGrid = null
 var own_char_slots: Array[TCGCharacterSlot] = []
 var foe_char_slots: Array[TCGCharacterSlot] = []
 var own_combat_row: CombatStatusRow = null
@@ -166,21 +162,15 @@ func _compute_board_layout(override_size: Vector2 = Vector2.ZERO) -> Dictionary:
 
 	var arena_left := left_x + 234.0
 	var arena_right := dice_tray_pos.x - 16.0
-	var arena_w := maxf(960.0, arena_right - arena_left)
-	var grid_w := 246.0
-	var gap := clampf((arena_w - grid_w * 2.0 - CW * 3.0) * 0.22, 16.0, 56.0)
-	var char_step := CW + clampf(gap * 0.65, 14.0, 40.0)
+	var arena_w := maxf(640.0, arena_right - arena_left)
+	var gap := clampf((arena_w - CW * 3.0) * 0.25, 22.0, 58.0)
+	var char_step := CW + gap
 	var char_span_half := char_step + CW * 0.5
-	var half_arena_need := char_span_half + gap + grid_w
-	var row_cx := clampf(cx, arena_left + half_arena_need, arena_right - half_arena_need)
+	var row_cx := clampf(cx, arena_left + char_span_half + 12.0, arena_right - char_span_half - 12.0)
 	var char_x0 := row_cx - char_span_half
 
 	var foe_y_base := safe.position.y + 74.0
 	var own_y_base := safe.position.y + 540.0
-	var foe_summons_pos := Vector2(row_cx - char_span_half - gap - grid_w, foe_y_base + 14.0)
-	var foe_supports_pos := Vector2(row_cx + char_span_half + gap, foe_y_base + 14.0)
-	var own_supports_pos := Vector2(row_cx - char_span_half - gap - grid_w, own_y_base - 4.0)
-	var own_summons_pos := Vector2(row_cx + char_span_half + gap, own_y_base - 4.0)
 
 	var foe_combat_pos := Vector2(row_cx - 120.0, safe.position.y + 374.0)
 	var own_combat_pos := Vector2(row_cx - 120.0, safe.position.y + 466.0)
@@ -216,10 +206,6 @@ func _compute_board_layout(override_size: Vector2 = Vector2.ZERO) -> Dictionary:
 		"foe_y_base": foe_y_base,
 		"own_y_base": own_y_base,
 		"active_offset": 28.0,
-		"foe_summons_pos": foe_summons_pos,
-		"foe_supports_pos": foe_supports_pos,
-		"own_supports_pos": own_supports_pos,
-		"own_summons_pos": own_summons_pos,
 		"foe_combat_pos": foe_combat_pos,
 		"own_combat_pos": own_combat_pos,
 		"hand_w": hand_w,
@@ -259,10 +245,6 @@ func get_zone_layout_rects(override_size: Vector2 = Vector2.ZERO) -> Dictionary:
 		"skill_bar": Rect2(l["skill_bar_pos"], Vector2(320, 138)),
 		"hand_strip": Rect2(hpos, Vector2(hw, 232)),
 		"top_banner": l["top_banner"],
-		"foe_summons": Rect2(l["foe_summons_pos"], Vector2(246, 262)),
-		"foe_supports": Rect2(l["foe_supports_pos"], Vector2(246, 262)),
-		"own_supports": Rect2(l["own_supports_pos"], Vector2(246, 262)),
-		"own_summons": Rect2(l["own_summons_pos"], Vector2(246, 262)),
 		"foe_char_0": Rect2(Vector2(cx0, fy), Vector2(CW, CH)),
 		"foe_char_1": Rect2(Vector2(cx0 + cstep, fy), Vector2(CW, CH)),
 		"foe_char_2": Rect2(Vector2(cx0 + cstep * 2.0, fy), Vector2(CW, CH)),
@@ -304,35 +286,6 @@ func _build_board_components() -> void:
 	own_hud.position = _lay["own_hud_pos"]
 	own_hud.z_index = UIConstants.Z_SKILL_BAR
 	add_child(own_hud)
-
-	# 2. 2x2 Support & Summon Zone Grids (mirrored across sides)
-	foe_summons_grid = TCGZoneGrid.new()
-	foe_summons_grid.position = _lay["foe_summons_pos"]
-	foe_summons_grid.z_index = UIConstants.Z_CHARACTERS
-	foe_summons_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(1, is_sum, idx, u, hov))
-	foe_summons_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(1, is_sum, idx, u))
-	add_child(foe_summons_grid)
-
-	foe_supports_grid = TCGZoneGrid.new()
-	foe_supports_grid.position = _lay["foe_supports_pos"]
-	foe_supports_grid.z_index = UIConstants.Z_CHARACTERS
-	foe_supports_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(1, is_sum, idx, u, hov))
-	foe_supports_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(1, is_sum, idx, u))
-	add_child(foe_supports_grid)
-
-	own_supports_grid = TCGZoneGrid.new()
-	own_supports_grid.position = _lay["own_supports_pos"]
-	own_supports_grid.z_index = UIConstants.Z_CHARACTERS
-	own_supports_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(0, is_sum, idx, u, hov))
-	own_supports_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(0, is_sum, idx, u))
-	add_child(own_supports_grid)
-
-	own_summons_grid = TCGZoneGrid.new()
-	own_summons_grid.position = _lay["own_summons_pos"]
-	own_summons_grid.z_index = UIConstants.Z_CHARACTERS
-	own_summons_grid.unit_hovered.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance, hov: bool): _on_zone_unit_hovered(0, is_sum, idx, u, hov))
-	own_summons_grid.unit_clicked.connect(func(is_sum: bool, idx: int, u: TCGPlayerSystem.UnitInstance): _on_zone_unit_clicked(0, is_sum, idx, u))
-	add_child(own_summons_grid)
 
 	# 3. Character Slots (3 Opponent + 3 Player)
 	for i in range(3):
@@ -984,7 +937,7 @@ func _present_events(events: Array) -> void:
 				elif pname == "end":
 					_banners.append({
 						"title": "End Phase",
-						"sub": "Summons act, then both players draw 2 cards",
+						"sub": "Statuses update, then both players draw 2 cards",
 						"color": TCGTheme.GOLD,
 						"y": banner_y,
 						"t": 0.0,
@@ -1330,19 +1283,7 @@ func sync_from_state() -> void:
 			p_foe.ended and not p_own.ended
 		)
 
-	# 2. Update Support & Summon Zones
-	if foe_summons_grid != null:
-		foe_summons_grid.position = _lay["foe_summons_pos"]
-		foe_summons_grid.setup("SUMMONS", true, p_foe.summons)
-	if foe_supports_grid != null:
-		foe_supports_grid.position = _lay["foe_supports_pos"]
-		foe_supports_grid.setup("SUPPORTS", false, p_foe.supports)
-	if own_supports_grid != null:
-		own_supports_grid.position = _lay["own_supports_pos"]
-		own_supports_grid.setup("SUPPORTS", false, p_own.supports)
-	if own_summons_grid != null:
-		own_summons_grid.position = _lay["own_summons_pos"]
-		own_summons_grid.setup("SUMMONS", true, p_own.summons)
+	# 2. Summons and Supports removed (streamlined 3v3 board)
 
 	# 3. Determine valid character targets for selected/dragged card or switch/choose_active
 	var valid_char_targets: Dictionary = {}
@@ -1468,7 +1409,7 @@ func sync_from_state() -> void:
 		tunable_dice(view_player),
 		own_elem,
 		pay_need,
-		p_own.rerolls
+		p_own.rerolls if game_state.phase == "roll" else 0
 	)
 
 	# 6. Update Skill Bar
@@ -1572,8 +1513,10 @@ func _process(delta: float) -> void:
 
 	# Advance Turn Timer cleanly when human is acting in Action/Roll Phase (T11.5)
 	if game_state != null and game_state.phase in ["action", "roll"] and is_my_turn() and not _pause_open and not intro_active() and _hotseat_cover < 0:
+		var prev_sec := ceili(_turn_timer)
 		_turn_timer = maxf(0.0, _turn_timer - delta)
-		dirty = true
+		if ceili(_turn_timer) != prev_sec:
+			dirty = true
 
 	# Smoothly glide character slots and hand strip toward their layout targets
 	var k_pos: float = 1.0 - exp(-12.0 * delta * game_speed)
@@ -1693,10 +1636,6 @@ func _process(delta: float) -> void:
 					_present_events(ai_res.get("events", []))
 					sync_from_state()
 					dirty = true
-
-	# Subtle periodic redraw for mat shimmer and turn timer pulse
-	if int(_clock * 12.0) != int((_clock - delta) * 12.0):
-		dirty = true
 
 	if dirty:
 		queue_redraw()
@@ -2357,18 +2296,6 @@ func _input(event: InputEvent) -> void:
 				vp.set_input_as_handled()
 			return
 
-		if selected_hand_index >= 0 and pay_pending.is_empty() and _card_detail_btn_rect().has_point(pos):
-			_inspect_extra_open = not _inspect_extra_open
-			if detail_drawer != null and is_inside_tree():
-				if _inspect_extra_open and selected_hand_index < me().hand.size():
-					detail_drawer.open_card(me().hand[selected_hand_index])
-				else:
-					detail_drawer.close()
-			queue_redraw()
-			if vp != null:
-				vp.set_input_as_handled()
-			return
-
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -2562,36 +2489,6 @@ func _on_hand_card_hovered(_idx: int, c_name: String, is_hovering: bool) -> void
 	sync_from_state()
 
 
-func _on_zone_unit_clicked(p_side: int, is_summon: bool, slot_idx: int, u: TCGPlayerSystem.UnitInstance) -> void:
-	if _is_ui_modal_blocking() or u == null:
-		return
-	var same: bool = (
-		String(_inspected.get("kind", "")) == "zone"
-		and int(_inspected.get("side", -1)) == p_side
-		and bool(_inspected.get("is_summon", false)) == is_summon
-		and int(_inspected.get("slot", -1)) == slot_idx
-	)
-	selected_hand_index = -1
-	_inspect_extra_open = false
-	if same:
-		_inspected.clear()
-		if detail_drawer != null and detail_drawer.is_open():
-			detail_drawer.close()
-	else:
-		_inspected = {"kind": "zone", "side": p_side, "is_summon": is_summon, "slot": slot_idx, "unit": u}
-		if detail_drawer != null and is_inside_tree():
-			if is_summon:
-				var sdef := CardDataSystem.get_summon_def(u.name)
-				var sdesc := "End Phase: Deal %d %s DMG to opposing active character." % [
-					sdef.damage if sdef != null else 1,
-					sdef.element if sdef != null else "Physical"
-				]
-				detail_drawer.open_status(u.name, sdesc, u.usages, "SUMMON")
-			else:
-				detail_drawer.open_card(u.name)
-	sync_from_state()
-
-
 func _on_status_icon_clicked(payload: Dictionary) -> void:
 	if _is_ui_modal_blocking() or payload.is_empty():
 		return
@@ -2630,14 +2527,6 @@ func _on_status_icon_clicked(payload: Dictionary) -> void:
 				var cnt := (st_inst.shield if st_inst.shield > 0 else st_inst.usages) if st_inst != null else int(payload.get("count", -1))
 				detail_drawer.open_status(st_name, st_txt, cnt, pkind.capitalize())
 	sync_from_state()
-
-
-func _on_zone_unit_hovered(p_side: int, is_summon: bool, slot_idx: int, u: TCGPlayerSystem.UnitInstance, is_hovering: bool) -> void:
-	if is_hovering and u != null:
-		_hovered_zone_info = {"side": p_side, "is_summon": is_summon, "slot": slot_idx, "unit": u}
-	else:
-		_hovered_zone_info.clear()
-	queue_redraw()
 
 
 func _on_status_icon_hovered(payload: Dictionary, is_hovering: bool) -> void:
@@ -2693,8 +2582,8 @@ func _draw() -> void:
 				break
 
 	# 2. Deck Card-Back Piles (left side) + Card Counts
-	_draw_deck_pile(l["foe_deck_rect"], p_foe.deck.size(), "FOE DECK")
-	_draw_deck_pile(l["own_deck_rect"], p_own.deck.size(), "DECK")
+	_draw_deck_pile(l["foe_deck_rect"], p_foe.deck.size(), "")
+	_draw_deck_pile(l["own_deck_rect"], p_own.deck.size(), "")
 
 	# 3. Opponent Hand Fan (top-right of center banner)
 	_draw_opponent_hand_fan(p_foe.hand)
@@ -2804,15 +2693,7 @@ func _draw_top_phase_banner() -> void:
 
 	var phase_str: String = "MATCH OVER" if game_state.phase == "over" else (game_state.phase.to_upper() + " PHASE")
 	var round_txt := "ROUND %d  ·  %s" % [game_state.round_number, phase_str]
-	TCGTheme.draw_text_centered(self, round_txt, Vector2(banner.get_center().x, banner.position.y + 18.0), 19, TCGTheme.GOLD_L, true, true)
-
-	var act_idx: int = maxi(0, actor())
-	var act_p: TCGPlayerSystem.PlayerState = game_state.players[act_idx]
-	var act_ch := act_p.get_active_char()
-	var ch_name := act_ch.name if act_ch != null else "Choosing…"
-	var turn_col := TCGTheme.GREEN if act_idx == view_player else TCGTheme.GOLD
-	var sub_txt := "Active Turn: %s (%s)" % [player_labels[act_idx], ch_name]
-	TCGTheme.draw_text_centered(self, sub_txt, Vector2(banner.get_center().x, banner.position.y + 40.0), 14, turn_col, true, true)
+	TCGTheme.draw_text_centered(self, round_txt, banner.get_center(), 19, TCGTheme.GOLD_L, true, true)
 
 
 func _draw_combat_status_ribbon(_side: int, center: Vector2, statuses: Array) -> void:
@@ -3129,21 +3010,15 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 		for pair in pairs:
 			TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, left.position.y + 156), 15.0)
 			gx += 38.0
-		var align_txt := "%d %s / Omni  +  %d Any" % [
-			cost.n,
-			cost.element if not cost.element.is_empty() else "Same Element",
-			cost.unaligned
-		]
-		TCGTheme.draw_text_pos(c, align_txt, Vector2(left.position.x + 24, left.position.y + 190), 16, TCGTheme.TEAL, true, false)
 		var prev_lines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
 		if not prev_lines.is_empty():
-			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 220, left.size.x - 48, 90), 15, TCGTheme.TEXT, 20, false)
-			var imp_rect := Rect2(left.position.x + 22, left.position.y + 314, left.size.x - 44, maxf(76.0, left.end.y - (left.position.y + 372.0)))
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 194, left.size.x - 48, 96), 15, TCGTheme.TEXT, 20, false)
+			var imp_rect := Rect2(left.position.x + 22, left.position.y + 296, left.size.x - 44, maxf(84.0, left.end.y - (left.position.y + 354.0)))
 			TCGTheme.draw_rounded_box(c, imp_rect, Color(0.05, 0.08, 0.13, 0.94), TCGTheme.GOLD_D, 10, 1)
 			TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(imp_rect.position.x + 12, imp_rect.position.y + 8), 13, TCGTheme.GOLD_L, true, true)
 			TCGTheme.draw_wrapped(c, "\n".join(prev_lines), Rect2(imp_rect.position.x + 12, imp_rect.position.y + 28, imp_rect.size.x - 24, imp_rect.size.y - 34), 14, TCGTheme.HEAL, 19, false)
 		else:
-			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 226, left.size.x - 48, 220), 16, TCGTheme.TEXT, 22, false)
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 200, left.size.x - 48, 220), 16, TCGTheme.TEXT, 22, false)
 
 	var status_msg: String = ""
 	var status_col: Color = TCGTheme.GOLD_L
@@ -3177,10 +3052,8 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 		var edge := TCGTheme.GOLD_L if (chosen or _pay_die_hovered == i) else (TCGTheme.GOLD if eligible else TCGTheme.DIM)
 		TCGTheme.draw_rounded_box(c, tile, fill, edge, 12, 3 if chosen else 1)
 
-		var die_box := Rect2(tile.get_center().x - 24, tile.get_center().y - 26, 48, 44)
+		var die_box := Rect2(tile.get_center().x - 24, tile.get_center().y - 22, 48, 44)
 		TCGArt.draw_die(c, face, die_box, chosen, _pay_die_hovered == i)
-		var tag := "SELECTED" if chosen else ("ELIGIBLE" if eligible else "OTHER")
-		TCGTheme.draw_text_centered(c, tag, Vector2(tile.get_center().x, tile.end.y - 11.0), 12, TCGTheme.GOLD_L if chosen else TCGTheme.DIM, true, false)
 
 	TCGTheme.draw_plaque(c, _pay_cancel_rect(), "Cancel [Esc]", TCGTheme.RED, _pay_btn_hovered == 0)
 	TCGTheme.draw_plaque(c, _pay_confirm_rect(), "Confirm [Enter]", TCGTheme.GREEN, _pay_btn_hovered == 1, not valid)
@@ -3200,99 +3073,40 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 			var skills: Array[CardDataSystem.SkillData] = c0.get_defn().skills
 			if s_idx < skills.size():
 				var sk: CardDataSystem.SkillData = skills[s_idx]
-				var plines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
-				var imp_rows := 0
-				for pl in plines:
-					imp_rows += maxi(1, int(ceil(float(String(pl).length()) / 42.0)))
-				imp_rows = mini(6, imp_rows)
-				var preview_h: float = (42.0 + float(imp_rows) * 20.0) if not plines.is_empty() else 0.0
-				var box_w: float = 436.0
-				var box_h: float = 168.0 + preview_h
+				var box_w: float = 400.0
+				var can_use: bool = bool(_active_preview.get("can_use_now", true)) if bool(_active_preview.get("ok", false)) else true
+				var box_h: float = 148.0 if can_use else 172.0
 				var sb_pos: Vector2 = l.get("skill_bar_pos", Vector2(safe.end.x - 328.0, safe.end.y - 166.0))
-				var bx: float = clampf(sb_pos.x - 124.0, safe.position.x + 12.0, safe.end.x - box_w - 12.0)
+				var bx: float = clampf(sb_pos.x - 92.0, safe.position.x + 12.0, safe.end.x - box_w - 12.0)
 				var by: float = clampf(sb_pos.y - box_h - 12.0, safe.position.y + 72.0, safe.end.y - box_h - 14.0)
 				var box := Rect2(bx, by, box_w, box_h)
+				var kind_lbl := "ULT" if sk.kind == "burst" else sk.kind.to_upper()
 				TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
-				TCGTheme.draw_text_pos(c, sk.name + "  [" + sk.kind.to_upper() + "]", Vector2(box.position.x + 14, box.position.y + 10), 16, TCGTheme.GOLD_L, true, true)
+				TCGTheme.draw_text_pos(c, sk.name + "  [" + kind_lbl + "]", Vector2(box.position.x + 14, box.position.y + 10), 16, TCGTheme.GOLD_L, true, true)
 				var pairs := TCGActionCardView.cost_to_pairs(sk.cost)
 				var gx: float = box.position.x + 26.0
 				for pair in pairs:
 					TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, box.position.y + 44), 11.5)
 					gx += 28.0
-				TCGTheme.draw_wrapped(c, sk.desc, Rect2(box.position.x + 14, box.position.y + 64, box.size.x - 28, 70), 14, TCGTheme.TEXT, 18, true)
-				if not plines.is_empty():
-					var iy: float = box.position.y + 136.0
-					c.draw_line(Vector2(box.position.x + 14, iy), Vector2(box.end.x - 14, iy), TCGTheme.GOLD_D, 1.0)
-					TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(box.position.x + 14, iy + 6.0), 13, TCGTheme.GOLD_L, true, true)
-					TCGTheme.draw_wrapped(c, "\n".join(plines), Rect2(box.position.x + 14, iy + 26.0, box.size.x - 28, preview_h - 24.0), 14, TCGTheme.HEAL, 19, false)
-				var can_use: bool = bool(_active_preview.get("can_use_now", true)) if bool(_active_preview.get("ok", false)) else true
-				var footer := "Click skill again to use" if can_use else String(_active_preview.get("block_reason", "Not currently usable"))
-				TCGTheme.draw_text_pos(c, footer, Vector2(box.position.x + 14, box.end.y - 24), 13, TCGTheme.GOLD if can_use else TCGTheme.RED, true, false)
+				TCGTheme.draw_wrapped(c, sk.desc, Rect2(box.position.x + 14, box.position.y + 64, box.size.x - 28, 72), 14, TCGTheme.TEXT, 18, true)
+				if not can_use:
+					var reason := String(_active_preview.get("block_reason", "Not currently usable"))
+					TCGTheme.draw_text_pos(c, reason, Vector2(box.position.x + 14, box.end.y - 24), 13, TCGTheme.RED, true, false)
 				return
 
-	# 2. Clicked Hand Card (1st click = preview card + optional Details toggle, 2nd click = try to play)
+	# 2. Clicked Hand Card (1st click = clean left card preview, 2nd click = try to play)
 	if selected_hand_index >= 0 and selected_hand_index < me().hand.size():
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(me().hand[selected_hand_index])
 		if cd != null:
 			var large_r := Rect2(safe.position.x + 18.0, safe.position.y + 208.0, 236.0, 346.0)
 			TCGActionCardView.draw_card_surface(c, large_r, cd.name, true, false, true, true, false, false)
-			var dbtn := _card_detail_btn_rect()
-			var drawer_open: bool = detail_drawer != null and detail_drawer.is_open()
-			var d_lbl := "Hide Details ▾" if (_inspect_extra_open or drawer_open) else "Details ▸"
-			TCGTheme.draw_plaque(c, dbtn, d_lbl, TCGTheme.GOLD, _inspect_btn_hovered, false, false)
-			if _inspect_extra_open and not drawer_open:
-				var card_plines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
-				var extra_imp_h: float = (34.0 + float(mini(4, card_plines.size())) * 20.0) if not card_plines.is_empty() else 0.0
-				var panel := Rect2(large_r.end.x + 10.0, large_r.position.y, 320.0, 270.0 + extra_imp_h)
-				TCGTheme.draw_gold_frame(c, panel, Color(0.06, 0.1, 0.16, 0.97), 12, true)
-				TCGTheme.draw_text_pos(c, cd.name, Vector2(panel.position.x + 16, panel.position.y + 14), 18, TCGTheme.GOLD_L, true, true)
-				var sub := cd.kind.to_upper()
-				if not cd.weapon.is_empty():
-					sub += " · " + cd.weapon.to_upper()
-				elif not cd.char_name.is_empty():
-					sub += " · " + cd.char_name.to_upper()
-				elif not cd.resonance.is_empty():
-					sub += " · " + cd.resonance.to_upper()
-				TCGTheme.draw_text_pos(c, sub, Vector2(panel.position.x + 16, panel.position.y + 38), 13, TCGTheme.TEAL, true, false)
-				c.draw_line(Vector2(panel.position.x + 14, panel.position.y + 62), Vector2(panel.end.x - 14, panel.position.y + 62), TCGTheme.GOLD_D, 1.0)
-				TCGTheme.draw_wrapped(c, cd.text, Rect2(panel.position.x + 16, panel.position.y + 72, panel.size.x - 32, 138), 15, TCGTheme.TEXT, 20, false)
-				if not card_plines.is_empty():
-					var cy: float = panel.position.y + 214.0
-					c.draw_line(Vector2(panel.position.x + 14, cy), Vector2(panel.end.x - 14, cy), TCGTheme.GOLD_D, 1.0)
-					TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(panel.position.x + 16, cy + 6.0), 13, TCGTheme.GOLD_L, true, true)
-					TCGTheme.draw_wrapped(c, "\n".join(card_plines), Rect2(panel.position.x + 16, cy + 26.0, panel.size.x - 32, extra_imp_h - 22.0), 14, TCGTheme.HEAL, 19, false)
-				var hint := "Click card again to play (or select target) · [Esc] to cancel."
-				TCGTheme.draw_wrapped(c, hint, Rect2(panel.position.x + 16, panel.end.y - 46, panel.size.x - 32, 38), 12, TCGTheme.DIM, 16, false)
 			return
 
-	# When Phase 9 DetailDrawer is open, it owns zone/status/character inspection.
+	# When Phase 9 DetailDrawer is open, it owns status/character inspection.
 	if detail_drawer != null and detail_drawer.is_open():
 		return
 
-	# 3. Clicked Support or Summon Tile (fallback when DetailDrawer unavailable)
-	if ikind == "zone" and _inspected.get("unit", null) != null:
-		var u: TCGPlayerSystem.UnitInstance = _inspected["unit"]
-		var is_sum: bool = bool(_inspected.get("is_summon", false))
-		var box := Rect2(safe.position.x + 20.0, safe.position.y + 210.0, 290.0, 170.0)
-		TCGTheme.draw_gold_frame(c, box, Color(0.06, 0.1, 0.16, 0.97), 10, true)
-		TCGTheme.draw_text_pos(c, u.name, Vector2(box.position.x + 12, box.position.y + 10), 15, TCGTheme.GOLD_L, true, true)
-		if is_sum:
-			var sdef := CardDataSystem.get_summon_def(u.name)
-			var desc := "End Phase: Deal %d %s DMG to opposing active character.\nRemaining Usages: %d" % [
-				sdef.damage if sdef != null else 1,
-				sdef.element if sdef != null else "Elemental",
-				u.usages
-			]
-			TCGTheme.draw_text_pos(c, "SUMMON", Vector2(box.position.x + 12, box.position.y + 32), 11, TCGTheme.TEAL, true, false)
-			TCGTheme.draw_wrapped(c, desc, Rect2(box.position.x + 12, box.position.y + 52, box.size.x - 24, 108), 12, TCGTheme.TEXT, 16, false)
-		else:
-			var cdef := CardDataSystem.get_card_def(u.name)
-			var desc := (cdef.text if cdef != null else "Support effect.") + ("\nRemaining Usages: %d" % u.usages if u.usages >= 0 else "")
-			TCGTheme.draw_text_pos(c, "SUPPORT", Vector2(box.position.x + 12, box.position.y + 32), 11, TCGTheme.TEAL, true, false)
-			TCGTheme.draw_wrapped(c, desc, Rect2(box.position.x + 12, box.position.y + 52, box.size.x - 24, 108), 12, TCGTheme.TEXT, 16, false)
-		return
-
-	# 4. Clicked Status / Aura / Equipment Icon on a Character
+	# 3. Clicked Status / Aura Icon on a Character
 	if ikind == "status":
 		var payload: Dictionary = _inspected.get("payload", {})
 		var pkind: String = String(payload.get("kind", ""))
