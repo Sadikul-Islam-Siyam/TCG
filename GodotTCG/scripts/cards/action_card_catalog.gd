@@ -14,13 +14,18 @@ static func register_all(db: CardDataSystem) -> void:
 		if cname.is_empty():
 			continue
 		var cost := db.parse_cost(d.get("cost", {}))
+		var kind := str(d.get("kind", "event"))
 		var cd := CardDataSystem.CardData.new(
 			cname,
-			str(d.get("kind", "event")),
+			kind,
 			cost
 		)
 		cd.role = str(d.get("role", ""))
-		cd.needs_char = bool(d.get("use_target", d.get("needs_char", false)))
+		cd.char_name = str(d.get("char_name", ""))
+		cd.weapon = str(d.get("weapon", ""))
+		cd.status = str(d.get("status", ""))
+		var default_needs_char: bool = (kind == "weapon" or kind == "artifact")
+		cd.needs_char = bool(d.get("use_target", d.get("needs_char", default_needs_char)))
 		cd.usages = int(d.get("usages", -1))
 		cd.text = str(d.get("text", ""))
 		cd.play_steps = db.parse_steps(d.get("steps", d.get("play_steps", [])), cd.needs_char)

@@ -1,9 +1,8 @@
 class_name TCGCardInteractionTestSuite
 extends RefCounted
 ## Stage 6: Automated Test Suite for Card Display, Hand Synchronization, Selection,
-## Targeting, Dice Payment, Elemental Tuning, and Rejection Feedback.
-## Exercises `TCGMatchScene`, `TCGHandStrip`, `TCGActionCardView`, and `TCGCharacterSlot`
-## directly against `TCGMatchLifecycle` and `TCGRulesEngine`.
+## Targeting, Equipment Restrictions, Selectable Swap Cards, Dice Payment,
+## Elemental Tuning, and Rejection Feedback.
 
 const MATCH_SCENE_RES := preload("res://scenes/board/match_scene.tscn")
 
@@ -16,12 +15,12 @@ static func run_all_tests() -> Dictionary:
 		_test_01_card_view_populates_from_migrated_data,
 		_test_02_hand_syncs_from_real_match_state,
 		_test_03_mulligan_selection_and_swap_execution,
-		_test_04_untargeted_event_and_support_card_play_and_payment,
+		_test_04_untargeted_utility_card_play_and_payment,
 		_test_05_zero_cost_card_executes_immediately,
-		_test_06_targeted_weapon_and_food_selection_cancel_and_equip,
+		_test_06_targeted_equipment_selection_and_equip,
 		_test_07_invalid_target_and_insufficient_dice_rejection,
-		_test_08_support_zone_full_rejection,
-		_test_09_talent_card_active_character_and_energy_checks,
+		_test_08_selectable_swap_cards_ui_flow,
+		_test_09_equipment_damage_preview_and_boost,
 		_test_10_elemental_tuning_flow_and_omni_matching_rejection,
 		_test_11_skill_and_switch_payment_interaction_and_synchronization,
 		_test_12_coin_intro_and_rematch_config_preserved,
@@ -65,7 +64,7 @@ static func _make_board(seed_val: int = 42, auto_action: bool = true) -> TCGMatc
 
 
 static func _test_01_card_view_populates_from_migrated_data() -> Dictionary:
-	var name := "01. Card scenes populate from migrated CardData & CharData"
+	var name := "01. Card scenes populate from Avatar CardData & CharData"
 	var view := TCGActionCardView.new()
 	for cname in CardDataSystem.card_defs.keys():
 		view.setup(String(cname), 0, false, true, false)
@@ -131,228 +130,220 @@ static func _test_03_mulligan_selection_and_swap_execution() -> Dictionary:
 	return {"name": name, "ok": true, "error": ""}
 
 
-static func _test_04_untargeted_event_and_support_card_play_and_payment() -> Dictionary:
-	var name := "04. Untargeted Buff & Draw Event card selection, payment modal, and board update"
+static func _test_04_untargeted_utility_card_play_and_payment() -> Dictionary:
+	var name := "04. Untargeted Utility cards ('Draw Cards' & 'Dice Carryover') payment and board update"
 	var board := _make_board(21, true)
 	var p := board.me()
-	p.hand.assign(["Tactical Draw", "Battle Cry"])
-	p.dice.assign(["Omni", "Omni", "Pyro", "Cryo", "Hydro"])
+	p.hand.assign(["Draw Cards", "Dice Carryover"])
+	p.dice.assign(["Omni", "Omni", "Pyro", "Hydro", "Geo"])
 	board.sync_from_state()
 
-	# Click "Tactical Draw" once -> inspects details without opening payment yet
+	# Click "Draw Cards" once -> inspects details without opening payment yet
 	var r1_inspect := board.select_or_play_hand_card(0, -2)
 	if not bool(r1_inspect.get("inspected", false)) or not board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "First click on Tactical Draw should inspect without opening payment"}
-	# Click "Tactical Draw" twice -> opens payment modal
+		return {"name": name, "ok": false, "error": "First click on Draw Cards should inspect without opening payment"}
+	# Click "Draw Cards" twice -> opens payment modal
 	var r1 := board.select_or_play_hand_card(0, -2)
 	if not bool(r1.get("ok", false)) or board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Second click on Tactical Draw should open payment modal"}
+		return {"name": name, "ok": false, "error": "Second click on Draw Cards should open payment modal"}
 
-	# Confirm payment -> Tactical Draw draws 2 cards
+	# Confirm payment -> Draw Cards draws 2 cards
 	var c1 := board.confirm_payment_modal()
 	if not bool(c1.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Tactical Draw confirm failed: %s" % str(c1.get("error", ""))}
+		return {"name": name, "ok": false, "error": "Draw Cards confirm failed: %s" % str(c1.get("error", ""))}
 
-	# Now click "Battle Cry" twice (1st inspect, 2nd open payment for cost 2 Unaligned)
-	var bc_idx: int = p.hand.find("Battle Cry")
-	board.select_or_play_hand_card(bc_idx, -2)
-	var r2 := board.select_or_play_hand_card(bc_idx, -2)
+	# Now click "Dice Carryover" twice (1st inspect, 2nd open payment for cost 1 Any)
+	var dc_idx: int = p.hand.find("Dice Carryover")
+	board.select_or_play_hand_card(dc_idx, -2)
+	var r2 := board.select_or_play_hand_card(dc_idx, -2)
 	if not bool(r2.get("ok", false)) or board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected payment modal for Battle Cry"}
+		return {"name": name, "ok": false, "error": "Expected payment modal for Dice Carryover"}
 	var c2 := board.confirm_payment_modal()
 	if not bool(c2.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Battle Cry confirm failed"}
+		return {"name": name, "ok": false, "error": "Dice Carryover confirm failed"}
 	var ok_buff: bool = false
 	for st in p.combat:
-		if st.name == "Attack +1":
+		if st.name == "Dice Carryover":
 			ok_buff = true
 	board.free()
 	if not ok_buff:
-		return {"name": name, "ok": false, "error": "Combat status did not update with Attack +1"}
+		return {"name": name, "ok": false, "error": "Combat status did not update with Dice Carryover"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_05_zero_cost_card_executes_immediately() -> Dictionary:
-	var name := "05. Zero-cost card ('Quick Rally') executes immediately without modal"
+	var name := "05. Zero-cost card ('Elemental Dice') executes immediately without modal"
 	var board := _make_board(25, true)
 	var p := board.me()
-	p.hand.assign(["Quick Rally"])
+	p.hand.assign(["Elemental Dice"])
 	p.dice.assign(["Geo"])
-	var deck_before: int = p.deck.size()
+	var active_el: String = p.get_active_char().get_defn().element
+	var count_before: int = p.dice.count(active_el)
 	board.sync_from_state()
 
-	# Click 1 inspects Quick Rally; Click 2 executes 0-cost card immediately without payment modal
+	# Click 1 inspects Elemental Dice; Click 2 executes 0-cost card immediately without payment modal
 	var r_insp := board.select_or_play_hand_card(0, -2)
 	if not bool(r_insp.get("inspected", false)) or p.hand.size() != 1:
 		board.free()
 		return {"name": name, "ok": false, "error": "First click should inspect 0-cost card without playing"}
 	var r := board.select_or_play_hand_card(0, -2)
-	var deck_after: int = p.deck.size()
+	var count_after: int = p.dice.count(active_el)
 	var pay_empty: bool = board.pay_pending.is_empty()
 	board.free()
 	if not bool(r.get("ok", false)) or not pay_empty:
 		return {"name": name, "ok": false, "error": "0-cost card should execute on second click without leaving pay_pending open"}
-	if deck_after != deck_before - 1:
-		return {"name": name, "ok": false, "error": "Quick Rally should draw 1 card from deck"}
+	if count_after != count_before + 1:
+		return {"name": name, "ok": false, "error": "Elemental Dice should add 1 %s die" % active_el}
 	return {"name": name, "ok": true, "error": ""}
 
 
-static func _test_06_targeted_weapon_and_food_selection_cancel_and_equip() -> Dictionary:
-	var name := "06. Targeted Heal cards ('Major Heal' & 'Minor Heal') select, cancel, and target heal"
+static func _test_06_targeted_equipment_selection_and_equip() -> Dictionary:
+	var name := "06. Character-specific Equipment highlights only owner and equips with Same-type dice"
 	var board := _make_board(30, true)
 	var p := board.me()
-	p.characters[0].hp = 6
-	p.characters[1].defeated = true
-	p.characters[1].hp = 0
-	p.hand.assign(["Major Heal", "Minor Heal"])
-	p.dice.assign(["Omni", "Omni", "Omni"])
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Aang", 10)
+	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Katara", 10)
+	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Toph", 10)
+	p.active = 0
+	p.hand.assign(["Aang's Glider Staff", "Katara's Spirit Water"])
+	p.dice.assign(["Pyro", "Pyro", "Geo"])
 	board.sync_from_state()
 
-	# 1. Click targeted Heal in hand -> enters awaiting_target state (alive slots 0 & 2 valid; defeated slot 1 invalid)
+	# 1. Click Aang's Glider Staff -> awaits target; ONLY slot 0 (Aang) should be highlighted as valid!
 	var r_sel := board.select_or_play_hand_card(0, -2)
 	if not bool(r_sel.get("awaiting_target", false)) or board.selected_hand_index != 0:
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected Major Heal to await target selection"}
+		return {"name": name, "ok": false, "error": "Expected Aang's Glider Staff to await target selection"}
 
-	if not board.own_char_slots[0].is_valid_target or board.own_char_slots[1].is_valid_target or not board.own_char_slots[2].is_valid_target:
+	if not board.own_char_slots[0].is_valid_target or board.own_char_slots[1].is_valid_target or board.own_char_slots[2].is_valid_target:
 		board.free()
-		return {"name": name, "ok": false, "error": "Heal valid target highlights on character slots are incorrect"}
+		return {"name": name, "ok": false, "error": "Only Aang (slot 0) should be highlighted for Aang's Glider Staff"}
 
-	# 2. Click same card again (keeps awaiting_target) & clear selection
-	var r_again := board.select_or_play_hand_card(0, -2)
-	if not bool(r_again.get("awaiting_target", false)):
-		board.free()
-		return {"name": name, "ok": false, "error": "Clicking selected targeted card again should keep awaiting_target"}
-	board.selected_hand_index = -1
-	board.sync_from_state()
-
-	# 3. Select Major Heal again and click Character 0 (heals 2 HP: 6 -> 8)
-	board.select_or_play_hand_card(0, -2)
+	# 2. Click Aang (slot 0) -> opens Same-type dice payment modal and equips "Equip +1 DMG"
 	board._on_char_slot_clicked(0, 0)
 	if board.pay_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Expected payment modal after clicking valid target character"}
-	var c_maj := board.confirm_payment_modal()
-	if not bool(c_maj.get("ok", false)) or p.characters[0].hp != 8:
+		return {"name": name, "ok": false, "error": "Expected payment modal after clicking Aang"}
+	var c_eq := board.confirm_payment_modal()
+	if not bool(c_eq.get("ok", false)) or not TCGRulesEngine.has_status(p.characters[0], "Equip +1 DMG"):
 		board.free()
-		return {"name": name, "ok": false, "error": "Major Heal should heal Character 0 from 6 to 8 HP"}
+		return {"name": name, "ok": false, "error": "Aang's Glider Staff should equip 'Equip +1 DMG' on Aang"}
 
-	# 4. Play Minor Heal (0 dice, heals 1 HP) onto Character 0 (8 -> 9)
-	var mh_idx: int = p.hand.find("Minor Heal")
-	board.select_or_play_hand_card(mh_idx, 0)
+	# 3. Equip Katara's Spirit Water (1 Any die) onto Katara (slot 1)
+	var kw_idx: int = p.hand.find("Katara's Spirit Water")
+	board.select_or_play_hand_card(kw_idx, 1)
 	if not board.pay_pending.is_empty():
 		board.confirm_payment_modal()
-	var final_hp: int = p.characters[0].hp
+	var has_sw: bool = TCGRulesEngine.has_status(p.characters[1], "Spirit Water")
 	board.free()
-	if final_hp != 9:
-		return {"name": name, "ok": false, "error": "Expected Character 0 HP to heal from 8 to 9, got %d" % final_hp}
-
+	if not has_sw:
+		return {"name": name, "ok": false, "error": "Katara's Spirit Water should equip 'Spirit Water' on Katara"}
 	return {"name": name, "ok": true, "error": ""}
 
 
 static func _test_07_invalid_target_and_insufficient_dice_rejection() -> Dictionary:
-	var name := "07. Invalid defeated target and insufficient dice rejection feedback"
+	var name := "07. Wrong-character Equipment target and insufficient dice rejection feedback"
 	var board := _make_board(33, true)
 	var p := board.me()
-	p.characters[1].defeated = true
-	p.characters[1].hp = 0
-	p.hand.assign(["Major Heal", "Battle Cry"])
-	p.dice.assign(["Pyro"]) # 1 die: cannot pay Battle Cry (costs 2 Unaligned)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Aang", 10)
+	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Katara", 10)
+	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Toph", 10)
+	p.active = 0
+	p.hand.assign(["Aang's Glider Staff", "Party Healing"])
+	p.dice.assign(["Pyro"]) # 1 die: cannot pay Party Healing (costs 2 Any)
 	board.sync_from_state()
 
-	# 1. Try playing Major Heal onto defeated character index 1 -> rejected
+	# 1. Try playing Aang's Glider Staff onto Katara (index 1) -> rejected
 	var r_bad_tgt := board.select_or_play_hand_card(0, 1)
 	if bool(r_bad_tgt.get("ok", false)):
 		board.free()
-		return {"name": name, "ok": false, "error": "Major Heal should be rejected on defeated character"}
+		return {"name": name, "ok": false, "error": "Aang's Glider Staff should be rejected on Katara"}
 
-	# 2. Try playing Battle Cry with only 1 die (Click 1 = inspect, Click 2 = reject with toast)
+	# 2. Try playing Party Healing with only 1 die (Click 1 = inspect, Click 2 = reject with toast)
 	board.select_or_play_hand_card(1, -2)
 	var r_no_dice := board.select_or_play_hand_card(1, -2)
 	var has_toast: bool = not board._toasts.is_empty()
 	board.free()
 	if bool(r_no_dice.get("ok", false)):
-		return {"name": name, "ok": false, "error": "Battle Cry should be rejected when player has only 1 die"}
+		return {"name": name, "ok": false, "error": "Party Healing should be rejected when player has only 1 die"}
 	if not has_toast:
 		return {"name": name, "ok": false, "error": "Rejection should produce a user-facing toast"}
 
 	return {"name": name, "ok": true, "error": ""}
 
 
-static func _test_08_support_zone_full_rejection() -> Dictionary:
-	var name := "08. Most-injured Heal ('Team Tonic') and Shield ('Iron Guard') card execution"
+static func _test_08_selectable_swap_cards_ui_flow() -> Dictionary:
+	var name := "08. Selectable 'Swap Cards' UI lets player pick up to 2 hand cards to swap"
 	var board := _make_board(35, true)
 	var p := board.me()
-	p.characters[0].hp = 9
-	p.characters[1].hp = 4
-	p.characters[2].hp = 8
-	p.hand.assign(["Team Tonic", "Iron Guard"])
-	p.dice.assign(["Omni", "Omni", "Omni"])
+	p.hand.assign(["Swap Cards", "Draw Cards", "Elemental Dice", "Party Healing"])
+	p.deck.assign(["Reroll Dice", "Omni Conversion", "Dice Carryover"])
+	p.dice.assign(["Omni", "Omni"])
 	board.sync_from_state()
 
+	# Click 1 inspects Swap Cards; Click 2 enters interactive card_swap_pending selection mode
 	board.select_or_play_hand_card(0, -2)
-	board.select_or_play_hand_card(0, -2)
-	board.confirm_payment_modal()
-	if p.characters[1].hp != 7:
+	var r_enter := board.select_or_play_hand_card(0, -2)
+	if not bool(r_enter.get("awaiting_swap", false)) or board.card_swap_pending.is_empty():
 		board.free()
-		return {"name": name, "ok": false, "error": "Team Tonic should heal most injured character from 4 to 7"}
+		return {"name": name, "ok": false, "error": "2nd click on Swap Cards should enter interactive card swap mode"}
 
-	board.select_or_play_hand_card(0, -2)
-	board.select_or_play_hand_card(0, -2)
-	board.confirm_payment_modal()
-	var has_shield: bool = false
-	for st in p.combat:
-		if st.name == "Shield +2":
-			has_shield = true
+	# Select hand cards 1 ("Draw Cards") and 3 ("Party Healing"); card 2 ("Elemental Dice") stays!
+	board.select_or_play_hand_card(1)
+	board.select_or_play_hand_card(3)
+	var sel: Array = board.card_swap_pending.get("selected_ids", [])
+	if sel != [1, 3]:
+		board.free()
+		return {"name": name, "ok": false, "error": "Expected selected swap indices [1, 3], got %s" % str(sel)}
+
+	# Confirm swap -> Swap Cards removed, Elemental Dice remains, 2 new cards drawn from deck
+	var res := board.confirm_card_swap()
+	var ok_kept: bool = p.hand.has("Elemental Dice") and p.hand.size() == 3
+	var swap_cleared: bool = board.card_swap_pending.is_empty()
 	board.free()
-	if not has_shield:
-		return {"name": name, "ok": false, "error": "Iron Guard should grant Shield +2 combat status"}
+	if not bool(res.get("ok", false)) or not swap_cleared:
+		return {"name": name, "ok": false, "error": "confirm_card_swap failed: %s" % str(res.get("error", ""))}
+	if not ok_kept:
+		return {"name": name, "ok": false, "error": "Swap Cards should keep unselected Elemental Dice and draw 2 replacements"}
 	return {"name": name, "ok": true, "error": ""}
 
 
-static func _test_09_talent_card_active_character_and_energy_checks() -> Dictionary:
-	var name := "09. Buff cards ('Power Boost' & 'Energy Charge') boost skill DMG and Energy"
+static func _test_09_equipment_damage_preview_and_boost() -> Dictionary:
+	var name := "09. Equipment ('Zuko's Dual Broadswords') boosts live DMG preview and attack damage"
 	var board := _make_board(40, true)
 	if board.input_controller != null:
 		board.input_controller.debounce_ms = 0
 	var p := board.me()
 	var foe := board.game_state.players[1 - board.view_player]
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10)
-	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Zuko", 10)
+	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Katara", 10)
 	p.active = 0
 	foe.active = 0
-	p.hand.assign(["Power Boost", "Energy Charge"])
-	p.dice.assign(["Omni", "Omni", "Pyro", "Pyro", "Pyro"])
+	p.hand.assign(["Zuko's Dual Broadswords"])
+	p.dice.assign(["Geo", "Geo", "Pyro", "Pyro", "Pyro"])
 	board.sync_from_state()
 
-	# 1. Play Energy Charge -> +1 Energy on Pyro Vanguard
-	board.select_or_play_hand_card(1, -2)
-	board.select_or_play_hand_card(1, -2)
-	board.confirm_payment_modal()
-	if p.characters[0].energy != 1:
-		board.free()
-		return {"name": name, "ok": false, "error": "Energy Charge should grant +1 Energy"}
-
-	# 2. Play Power Boost -> Next Attack +2 boosts Normal Attack from 2 to 4 DMG
-	board.select_or_play_hand_card(0, -2)
-	board.select_or_play_hand_card(0, -2)
+	# Equip Zuko's Dual Broadswords onto Zuko (slot 0) using 2 same-type Geo dice
+	board.select_or_play_hand_card(0, 0)
 	board.confirm_payment_modal()
 	if board.animation_queue != null:
 		board.animation_queue.skip_all()
 	board._busy_timer = 0.0
+
+	# Normal Attack (base 2 Phys + 1 Equipment = 3 DMG) -> previews 3 DMG and leaves Katara at 7 HP
 	board._on_skill_clicked(0)
 	var preview_dmg: int = int(board.foe_char_slots[0].preview_info.get("total_dmg", 0))
 	board._on_skill_clicked(0)
 	board.confirm_payment_modal()
 	var foe_hp: int = foe.characters[0].hp
 	board.free()
-	if preview_dmg != 4 or foe_hp != 6:
-		return {"name": name, "ok": false, "error": "Expected Power Boost to preview 4 DMG and leave foe HP at 6, got preview=%d hp=%d" % [preview_dmg, foe_hp]}
+	if preview_dmg != 3 or foe_hp != 7:
+		return {"name": name, "ok": false, "error": "Expected Broadswords to preview 3 DMG and leave foe HP at 7, got preview=%d hp=%d" % [preview_dmg, foe_hp]}
 
 	return {"name": name, "ok": true, "error": ""}
 
@@ -362,8 +353,8 @@ static func _test_10_elemental_tuning_flow_and_omni_matching_rejection() -> Dict
 	var board := _make_board(45, true)
 	var p := board.me()
 	var active_el: String = p.get_active_char().get_defn().element
-	var other_el: String = CardDataSystem.PYRO if active_el != CardDataSystem.PYRO else CardDataSystem.CRYO
-	p.hand.assign(["Tactical Draw"])
+	var other_el: String = CardDataSystem.PYRO if active_el != CardDataSystem.PYRO else CardDataSystem.HYDRO
+	p.hand.assign(["Draw Cards"])
 	p.dice.assign(["Omni", active_el])
 	board.sync_from_state()
 
@@ -372,7 +363,7 @@ static func _test_10_elemental_tuning_flow_and_omni_matching_rejection() -> Dict
 		board.free()
 		return {"name": name, "ok": false, "error": "Tuning should be rejected when all dice are Omni or active element"}
 
-	# 2. Add a non-matching die and tune Tactical Draw into active element
+	# 2. Add a non-matching die and tune Draw Cards into active element
 	p.dice.append(other_el)
 	board.sync_from_state()
 	if not board.begin_tune(0):
@@ -380,11 +371,64 @@ static func _test_10_elemental_tuning_flow_and_omni_matching_rejection() -> Dict
 		return {"name": name, "ok": false, "error": "Tuning should open modal when a non-matching die exists"}
 	var res := board.confirm_payment_modal()
 	var ok_tuned: bool = p.hand.is_empty() and p.dice.count(active_el) == 2
+
+	# 3. Dead character's unplayable weapon card in hand can STILL be dragged to Dice Tray to Tune!
+	var dead_idx: int = 1 if p.active != 1 else 2
+	var dead_name: String = p.characters[dead_idx].name
+	p.characters[dead_idx].hp = 0
+	p.characters[dead_idx].defeated = true
+	var weapon_map := {
+		"Aang": "Aang's Glider Staff",
+		"Katara": "Katara's Spirit Water",
+		"Toph": "Earth Rumble Championship Belt",
+		"Zuko": "Zuko's Dual Broadswords",
+		"Azula": "Azula's Dagger",
+		"Iroh": "Iroh's Pearl-Handled Dagger",
+	}
+	var dead_weapon: String = String(weapon_map.get(dead_name, "Aang's Glider Staff"))
+	p.hand.assign([dead_weapon])
+	p.dice.assign([other_el, other_el])
+	if board.input_controller != null:
+		board.input_controller._last_action_ms = -1000
+	board.sync_from_state()
+	var cv := board.hand_strip._card_views[0]
+	var drag_emitted := [false]
+	cv.card_drag_started.connect(func(_cn: String, _hi: int, _gp: Vector2) -> void: drag_emitted[0] = true)
+	var press_ev := InputEventMouseButton.new()
+	press_ev.button_index = MOUSE_BUTTON_LEFT
+	press_ev.pressed = true
+	press_ev.position = Vector2(30, 30)
+	cv._gui_input(press_ev)
+	var move_ev := InputEventMouseMotion.new()
+	move_ev.position = Vector2(60, 30)
+	cv._gui_input(move_ev)
+	if not drag_emitted[0] or board.drag_state.is_empty():
+		board.free()
+		return {"name": name, "ok": false, "error": "Dead character weapon card in hand must still be draggable for Elemental Tuning"}
+	board._finish_card_drag(board.dice_tray.position + Vector2(34, 66))
+	var ok_dead_tune: bool = p.hand.is_empty() and p.dice.has(active_el)
+
+	# 4. End Round requires 2 clicks (1st click opens confirmation, 2nd click confirms!)
+	var clk_er := InputEventMouseButton.new()
+	clk_er.button_index = MOUSE_BUTTON_LEFT
+	clk_er.pressed = true
+	clk_er.position = board._end_phase_rect().get_center()
+	board._input(clk_er)
+	var armed_ok: bool = board._end_round_confirm_open and not p.ended
+	board._input(clk_er)
+	var confirmed_ok: bool = (not board._end_round_confirm_open) and p.ended
+
 	board.free()
 	if not bool(res.get("ok", false)):
 		return {"name": name, "ok": false, "error": "Elemental Tuning confirm failed"}
 	if not ok_tuned:
 		return {"name": name, "ok": false, "error": "Expected hand card consumed and %s die converted to %s" % [other_el, active_el]}
+	if not ok_dead_tune:
+		return {"name": name, "ok": false, "error": "Dragging dead character weapon onto Dice Tray should convert die via Elemental Tuning"}
+	if not armed_ok:
+		return {"name": name, "ok": false, "error": "1st click on End Round should open confirmation without immediately ending round"}
+	if not confirmed_ok:
+		return {"name": name, "ok": false, "error": "2nd click on End Round should confirm and end the round"}
 
 	return {"name": name, "ok": true, "error": ""}
 
@@ -393,9 +437,9 @@ static func _test_11_skill_and_switch_payment_interaction_and_synchronization() 
 	var name := "11. Skill & character switch payment modal and turn handoff"
 	var board := _make_board(50, true)
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Azula", 10)
 	p.active = 0
-	p.dice.assign(["Electro", "Electro", "Electro", "Pyro"])
+	p.dice.assign(["Electro", "Electro", "Pyro", "Geo"])
 	board.sync_from_state()
 
 	# Click Elemental Skill once -> inspects skill; click again -> opens payment modal
@@ -423,9 +467,9 @@ static func _test_12_coin_intro_and_rematch_config_preserved() -> Dictionary:
 	var name := "12. Coin Toss intro skips cleanly & rematch preserves custom decks and AI levels"
 	var board: TCGMatchScene = MATCH_SCENE_RES.instantiate() as TCGMatchScene
 	board._build_board_components()
-	var chars0: Array = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
+	var chars0: Array = ["Aang", "Katara", "Toph"]
 	var deck0: Array = TCGDeckSystem.build_preset(chars0)
-	var chars1: Array = ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
+	var chars1: Array = ["Zuko", "Azula", "Iroh"]
 	var deck1: Array = TCGDeckSystem.build_preset(chars1)
 	board.start_match_with_decks("pve", chars0, deck0, chars1, deck1, 77, false, "normal", "hard", true)
 
@@ -440,8 +484,8 @@ static func _test_12_coin_intro_and_rematch_config_preserved() -> Dictionary:
 	board.game_state.phase = "over"
 	board.restart_match()
 	var kept_ok: bool = (
-		board.game_state.players[0].characters[0].name == "Pyro Vanguard"
-		and board.game_state.players[1].characters[2].name == "Anemo Scout"
+		board.game_state.players[0].characters[0].name == "Aang"
+		and board.game_state.players[1].characters[2].name == "Iroh"
 		and board.player_labels[1] == "AI (Hard)"
 	)
 	board.free()
@@ -454,7 +498,7 @@ static func _test_13_hotseat_cover_and_first_player_setup_sync() -> Dictionary:
 	var name := "13. Hotseat pass-device privacy cover & initial first_player sync"
 	var board := _make_board(50, true)
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Azula", 10)
 	p.active = 0
 	p.dice.assign(["Omni", "Omni", "Omni", "Omni"])
 	board.sync_from_state()
@@ -478,7 +522,7 @@ static func _test_13_hotseat_cover_and_first_player_setup_sync() -> Dictionary:
 	# Find a seed whose first_player == 1 and verify p_show_intro=true syncs view_player to actor
 	var board2: TCGMatchScene = MATCH_SCENE_RES.instantiate() as TCGMatchScene
 	board2._build_board_components()
-	var chars_a: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
+	var chars_a: Array = ["Zuko", "Azula", "Iroh"]
 	var deck_a: Array = TCGDeckSystem.build_preset(chars_a)
 	var found_p1_first: bool = false
 	for s in range(1, 20):
@@ -540,7 +584,7 @@ static func _test_14_one_click_roll_and_drag_tune_on_tray() -> Dictionary:
 	board.view_player = ap_act
 	var p := board.me()
 	var active_el: String = p.get_active_char().get_defn().element
-	var diff_el: String = CardDataSystem.PYRO if active_el != CardDataSystem.PYRO else CardDataSystem.CRYO
+	var diff_el: String = CardDataSystem.PYRO if active_el != CardDataSystem.PYRO else CardDataSystem.HYDRO
 	p.dice.assign([diff_el, diff_el])
 	var hand_before: int = p.hand.size()
 	board.sync_from_state()
@@ -580,16 +624,16 @@ static func _test_16_hover_shows_no_details_and_click_twice_plays() -> Dictionar
 	var name := "16. Hover shows no description anywhere; 1st click inspects, 2nd click plays/switches"
 	var board := _make_board(91, true)
 	var p := board.me()
-	p.hand.assign(["Quick Rally"])
+	p.hand.assign(["Elemental Dice"])
 	p.dice.assign(["Omni", "Omni", "Omni", "Omni"])
-	var deck_before: int = p.deck.size()
+	var dice_before: int = p.dice.size()
 	board.sync_from_state()
 
 	# 1. Hovering char, skill, and card must NOT populate _inspected or select a card
 	board._on_char_slot_hovered(0, 0, true)
 	board._on_char_slot_hovered(1, 0, true)
 	board._on_skill_hovered(0, true)
-	board._on_hand_card_hovered(0, "Quick Rally", true)
+	board._on_hand_card_hovered(0, "Elemental Dice", true)
 	if not board._inspected.is_empty() or board.selected_hand_index != -1 or not board.pay_pending.is_empty():
 		board.free()
 		return {"name": name, "ok": false, "error": "Hovering must not open description/inspection"}
@@ -628,13 +672,13 @@ static func _test_16_hover_shows_no_details_and_click_twice_plays() -> Dictionar
 
 	# 5. Clicking 0-cost hand card once inspects; clicking twice plays it
 	board.select_or_play_hand_card(0, -2)
-	if board.selected_hand_index != 0 or p.deck.size() != deck_before:
+	if board.selected_hand_index != 0 or p.dice.size() != dice_before:
 		board.free()
 		return {"name": name, "ok": false, "error": "1st click on hand card should inspect without playing"}
 	board.select_or_play_hand_card(0, -2)
-	if p.deck.size() != deck_before - 1:
+	if p.dice.size() != dice_before + 1:
 		board.free()
-		return {"name": name, "ok": false, "error": "2nd click on 0-cost hand card should play it and draw 1"}
+		return {"name": name, "ok": false, "error": "2nd click on 0-cost Elemental Dice should play it and gain 1 die"}
 
 	board.free()
 	return {"name": name, "ok": true, "error": ""}
@@ -739,13 +783,13 @@ static func _test_18_skill_and_card_damage_reaction_preview() -> Dictionary:
 	board.dismiss_hotseat_cover()
 	var p := board.me()
 	var f: TCGPlayerSystem.PlayerState = board.game_state.players[1 - board.view_player]
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Azula", 10)
 	p.active = 0
-	p.dice.assign(["Electro", "Electro", "Electro", "Omni"])
-	f.characters[0] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 5)
-	f.characters[0].aura = CardDataSystem.CRYO
-	f.characters[1] = TCGPlayerSystem.CharacterInstance.new("Geo Guardian", 10)
-	f.characters[2] = TCGPlayerSystem.CharacterInstance.new("Hydro Cleric", 10)
+	p.dice.assign(["Electro", "Electro", "Pyro", "Omni"])
+	f.characters[0] = TCGPlayerSystem.CharacterInstance.new("Katara", 5)
+	f.characters[0].aura = CardDataSystem.HYDRO
+	f.characters[1] = TCGPlayerSystem.CharacterInstance.new("Toph", 10)
+	f.characters[2] = TCGPlayerSystem.CharacterInstance.new("Iroh", 10)
 	f.active = 0
 	board.sync_from_state()
 
@@ -763,21 +807,21 @@ static func _test_18_skill_and_card_damage_reaction_preview() -> Dictionary:
 		board.free()
 		return {"name": name, "ok": false, "error": "Click-1 Normal Attack preview failed: " + str(na_prev)}
 
-	# Click 1 on Elemental Skill -> shows 4 Electro DMG (Superconduct +1) + 1 Piercing on bench
+	# Click 1 on Elemental Skill (Blue Arc = 2 Electro) -> Electro-Charged (+1) = 3 DMG + 1 Piercing on bench
 	board._on_skill_clicked(1)
 	var sk0: Dictionary = board.foe_char_slots[0].preview_info
 	var sk1: Dictionary = board.foe_char_slots[1].preview_info
 	var sk2: Dictionary = board.foe_char_slots[2].preview_info
-	if int(sk0.get("total_dmg", 0)) != 4 or String(sk0.get("reaction", "")) != "Superconduct":
+	if int(sk0.get("total_dmg", 0)) != 3 or String(sk0.get("reaction", "")) != "Electro-Charged":
 		board.free()
-		return {"name": name, "ok": false, "error": "Click-1 Skill Superconduct preview failed: " + str(sk0)}
+		return {"name": name, "ok": false, "error": "Click-1 Skill Electro-Charged preview failed: " + str(sk0)}
 	if int(sk1.get("piercing_dmg", 0)) != 1 or int(sk2.get("piercing_dmg", 0)) != 1:
 		board.free()
-		return {"name": name, "ok": false, "error": "Click-1 Superconduct bench piercing preview missing"}
+		return {"name": name, "ok": false, "error": "Click-1 Electro-Charged bench piercing preview missing"}
 
 	# Click 2 on Elemental Skill -> Payment modal opens while preview remains visible until cancelled
 	board._on_skill_clicked(1)
-	if board.pay_pending.is_empty() or int(board.foe_char_slots[0].preview_info.get("total_dmg", 0)) != 4:
+	if board.pay_pending.is_empty() or int(board.foe_char_slots[0].preview_info.get("total_dmg", 0)) != 3:
 		board.free()
 		return {"name": name, "ok": false, "error": "Click-2 payment modal should keep action preview visible"}
 	board.cancel_payment_modal()
@@ -787,4 +831,3 @@ static func _test_18_skill_and_card_damage_reaction_preview() -> Dictionary:
 
 	board.free()
 	return {"name": name, "ok": true, "error": ""}
-

@@ -217,6 +217,11 @@ func setup_character(data: Dictionary) -> void:
 func set_anim_state(p_hit_flash: float, p_lunge_offset: Vector2) -> void:
 	hit_flash_alpha = p_hit_flash
 	lunge_offset = p_lunge_offset
+	# Subtle Genshin-style dynamic card tilt during attack lunge
+	var tilt_dir: float = -1.0 if side == 0 else 1.0
+	var lunge_norm: float = clampf(lunge_offset.length() / 28.0, 0.0, 1.0)
+	pivot_offset = size * 0.5
+	rotation = tilt_dir * deg_to_rad(5.5) * lunge_norm
 	queue_redraw()
 
 
@@ -382,30 +387,36 @@ func _draw() -> void:
 		is_active_char or _hovered or is_selected_target or is_valid_target or is_clickable
 	)
 
-	# Portrait art slot + inner shadow
-	var art_rect := Rect2(r.position.x + 6, r.position.y + 6, r.size.x - 12, r.size.y - 52)
+	# Portrait art slot (full-bleed Genshin character card style)
+	var art_rect := Rect2(r.position.x + 5, r.position.y + 5, r.size.x - 10, r.size.y - 10)
 	TCGArt.draw_portrait(self, char_state.name, d.element, art_rect, defeated)
-	# Soft inner vignette shadow
-	draw_rect(Rect2(art_rect.position.x, art_rect.end.y - 20.0, art_rect.size.x, 20.0), Color(0, 0, 0, 0.34))
+	# Subtle bottom gradient vignette so the character name reads cleanly without blocking art
+	for g_i in range(4):
+		var gh := 14.0
+		var gy := art_rect.end.y - float(4 - g_i) * gh
+		var ga := 0.16 + float(g_i) * 0.18
+		draw_rect(Rect2(art_rect.position.x, gy, art_rect.size.x, gh + 1.0), Color(0.04, 0.06, 0.10, ga))
 
-	# Frozen / Petrified crystal overlay + snowflakes (T3.9)
+	# Frozen / Petrified / Stunned overlay + custom Stunned icon (T3.9)
 	var is_frozen: bool = TCGRulesEngine.has_status(char_state, "Frozen")
 	var is_petrified: bool = TCGRulesEngine.has_status(char_state, "Petrified")
-	if is_frozen or is_petrified:
-		var ov_col := Color(0.55, 0.86, 1.0, 0.44) if is_frozen else Color(0.75, 0.63, 0.35, 0.50)
+	var is_stunned: bool = TCGRulesEngine.has_status(char_state, "Stunned")
+	if is_frozen or is_petrified or is_stunned:
+		var ov_col := Color(0.55, 0.86, 1.0, 0.36) if is_frozen else (Color(0.75, 0.63, 0.35, 0.42) if is_petrified else Color(0.46, 0.24, 0.72, 0.34))
 		draw_rect(art_rect, ov_col)
-		# Procedural jagged crack lines
-		var cr_col := Color(0.88, 0.97, 1.0, 0.72) if is_frozen else Color(0.92, 0.84, 0.58, 0.7)
-		draw_line(art_rect.position + Vector2(14, 18), art_rect.get_center() + Vector2(-6, -4), cr_col, 1.5)
-		draw_line(art_rect.get_center() + Vector2(-6, -4), art_rect.end - Vector2(16, 22), cr_col, 1.3)
-		draw_line(art_rect.get_center() + Vector2(-6, -4), Vector2(art_rect.end.x - 18, art_rect.position.y + 34), cr_col, 1.2)
-		if is_frozen:
-			for sf in range(4):
-				var fx: float = art_rect.position.x + fmod(float(sf) * 29.0 + _anim_t * 14.0, art_rect.size.x - 12.0) + 6.0
-				var fy: float = art_rect.position.y + fmod(float(sf) * 41.0 + _anim_t * 22.0, art_rect.size.y - 12.0) + 6.0
-				draw_circle(Vector2(fx, fy), 2.2, Color(0.95, 0.99, 1.0, 0.85))
-		var lbl := "FROZEN" if is_frozen else "PETRIFIED"
-		TCGTheme.draw_text_centered(self, lbl, Vector2(r.get_center().x, art_rect.end.y - 16.0), 15, Color.WHITE, true, true)
+		if is_stunned:
+			var st_tex := TCGArt.get_status_icon("Stunned")
+			if st_tex != null:
+				var sc_c := art_rect.get_center()
+				var s_sz := minf(art_rect.size.x, art_rect.size.y) * 0.56
+				draw_texture_rect(st_tex, Rect2(sc_c - Vector2(s_sz * 0.5, s_sz * 0.5), Vector2(s_sz, s_sz)), false, Color(1, 1, 1, 0.92))
+		else:
+			var cr_col := Color(0.88, 0.97, 1.0, 0.72) if is_frozen else Color(0.92, 0.84, 0.58, 0.7)
+			draw_line(art_rect.position + Vector2(14, 18), art_rect.get_center() + Vector2(-6, -4), cr_col, 1.5)
+			draw_line(art_rect.get_center() + Vector2(-6, -4), art_rect.end - Vector2(16, 22), cr_col, 1.3)
+			draw_line(art_rect.get_center() + Vector2(-6, -4), Vector2(art_rect.end.x - 18, art_rect.position.y + 34), cr_col, 1.2)
+		var lbl := "FROZEN" if is_frozen else ("PETRIFIED" if is_petrified else "STUNNED")
+		TCGTheme.draw_text_centered(self, lbl, Vector2(r.get_center().x, art_rect.end.y - 38.0), 14, Color.WHITE, true, true)
 	elif _freeze_shatter_timer > 0.0:
 		var sa: float = clampf(_freeze_shatter_timer / 0.38, 0.0, 1.0)
 		for k in range(5):
@@ -415,13 +426,11 @@ func _draw() -> void:
 
 	# Hit flash overlay
 	if hit_flash_alpha > 0.01:
-		draw_rect(art_rect, Color(1.0, 0.27, 0.24, clampf(hit_flash_alpha, 0.0, 0.75)))
+		draw_rect(art_rect, Color(1.0, 0.27, 0.24, clampf(hit_flash_alpha, 0.0, 0.70)))
 
-	# Name banner at lower card
-	var name_bar := Rect2(r.position.x + 6, r.end.y - 46, r.size.x - 12, 38)
-	draw_rect(name_bar, Color(0.06, 0.09, 0.14, 0.90))
-	draw_line(name_bar.position, Vector2(name_bar.end.x, name_bar.position.y), TCGTheme.GOLD_D, 1.0)
-	var name_sz: int = TCGTheme.fit_font_size(char_state.name, name_bar.size.x - 10.0, 18, 11, true)
+	# Sleek bottom name plate blended cleanly over lower portrait
+	var name_bar := Rect2(r.position.x + 6, r.end.y - 34, r.size.x - 12, 28)
+	var name_sz: int = TCGTheme.fit_font_size(char_state.name, name_bar.size.x - 8.0, 16, 11, true)
 	TCGTheme.draw_text_centered(
 		self,
 		char_state.name,
@@ -459,20 +468,21 @@ func _draw() -> void:
 			var ea := _energy_spark_timer / 0.45
 			draw_circle(Vector2(ex, r.position.y + 56.0 + float(maxi(0, char_state.energy - 1)) * 23.0), 15.0 * (1.2 - ea * 0.4), Color(1.0, 0.92, 0.55, ea * 0.6))
 
-		# Left-edge EquipmentColumn badges (T3.4)
-		var eq_y: float = r.position.y + 60.0
+		# Left-edge EquipmentColumn badges (T3.4) using custom Status_Icons PNGs
+		var eq_y: float = r.position.y + 62.0
 		for eq_slot in ["weapon", "artifact", "talent"]:
 			if char_state.equipment.has(eq_slot):
+				var eq_card_name := String(char_state.equipment[eq_slot])
 				var pop_s: float = 1.0 + float(_eq_pop_timers.get(eq_slot, 0.0)) * 0.9
-				var eq_sz: float = 28.0 * pop_s
+				var eq_sz: float = 30.0 * pop_s
 				var eq_rect := Rect2(r.position.x + 14.0 - eq_sz * 0.5, eq_y - eq_sz * 0.5, eq_sz, eq_sz)
 				var eq_kind: String = "weapon" if eq_slot == "weapon" else ("artifact" if eq_slot == "artifact" else "talent")
-				TCGArt.draw_status_badge(self, eq_rect, eq_kind, d.element, 0)
+				TCGArt.draw_status_badge(self, eq_rect, eq_kind, d.element, 0, eq_card_name)
 				_icon_rects.append({
 					"rect": eq_rect.grow(5.0),
-					"payload": {"kind": "equip", "slot": eq_slot, "card_name": String(char_state.equipment[eq_slot])}
+					"payload": {"kind": "equip", "slot": eq_slot, "card_name": eq_card_name}
 				})
-				eq_y += 32.0
+				eq_y += 34.0
 
 		# Top-left HP Badge (~35% width footprint, shield shape, crimson <30% HP) (T3.3)
 		var disp_hp: float = float(shown_hp_override) if shown_hp_override >= 0 else _display_hp
@@ -563,10 +573,13 @@ func _draw() -> void:
 			if st.name == "Frozen" or st.name == "Petrified":
 				skind = "freeze"
 				elem = "Cryo" if st.name == "Frozen" else "Geo"
+			elif st.name == "Stunned":
+				skind = "debuff"
+				elem = "Electro"
 			elif st.shield > 0 or (sdef != null and sdef.shield > 0):
 				skind = "shield"
 			var count_val: int = st.shield if st.shield > 0 else maxi(0, st.usages)
-			TCGArt.draw_status_badge(self, st_rect, skind, elem, count_val)
+			TCGArt.draw_status_badge(self, st_rect, skind, elem, count_val, st.name)
 			if count_val > 0:
 				var cr := Rect2(st_rect.end.x - 16.0, st_rect.end.y - 14.0, 17.0, 14.0)
 				TCGTheme.draw_rounded_box(self, cr, Color(0.06, 0.09, 0.14, 0.96), TCGTheme.GOLD_D, 4, 1)
@@ -588,28 +601,35 @@ func _draw() -> void:
 				"payload": {"kind": "status_overflow", "char_name": char_state.name, "statuses": char_state.statuses}
 			})
 
-	# Defeated Overlay: grayscale desaturation veil + centered seal (T3.10)
+	# Clean Genshin-style Defeated Overlay: dark veil + crimson lotus/diamond defeat seal
 	if defeated:
-		draw_rect(r.grow(-4), Color(0.05, 0.06, 0.08, 0.58))
+		draw_rect(r.grow(-4), Color(0.05, 0.05, 0.07, 0.62))
 		var seal_c := art_rect.get_center()
-		draw_circle(seal_c, 28.0, Color(0.10, 0.06, 0.08, 0.92))
-		draw_arc(seal_c, 28.0, 0.0, TAU, 24, TCGTheme.RED, 2.8)
-		draw_line(seal_c + Vector2(-13, -13), seal_c + Vector2(13, 13), TCGTheme.RED, 2.8)
-		draw_line(seal_c + Vector2(13, -13), seal_c + Vector2(-13, 13), TCGTheme.RED, 2.8)
-		var ko_rect := Rect2(r.position.x + 10, r.position.y + r.size.y * 0.52, r.size.x - 20, 30)
-		TCGTheme.draw_rounded_box(self, ko_rect, Color(0.08, 0.06, 0.08, 0.90), TCGTheme.RED, 6, 1)
-		TCGTheme.draw_text_centered(self, "DEFEATED", ko_rect.get_center(), 14, TCGTheme.RED, true, true)
+		var sr: float = 28.0
+		var seal_pts := PackedVector2Array([
+			seal_c + Vector2(0, -sr * 1.18),
+			seal_c + Vector2(sr * 0.85, 0),
+			seal_c + Vector2(0, sr * 1.18),
+			seal_c + Vector2(-sr * 0.85, 0),
+		])
+		draw_colored_polygon(seal_pts, Color(0.46, 0.13, 0.16, 0.85))
+		var sc_closed := seal_pts.duplicate()
+		sc_closed.append(seal_pts[0])
+		draw_polyline(sc_closed, Color(0.92, 0.42, 0.42, 0.90), 2.0, true)
+		draw_line(seal_c + Vector2(-9, -9), seal_c + Vector2(9, 9), Color(0.96, 0.78, 0.78, 0.90), 2.4)
+		draw_line(seal_c + Vector2(9, -9), seal_c + Vector2(-9, 9), Color(0.96, 0.78, 0.78, 0.90), 2.4)
 
 	# Target Marker Checkmark scaling in with TRANS_BACK (T3.11)
 	if _target_marker_scale > 0.04:
-		var mc := Vector2(r.get_center().x, r.position.y + r.size.y * 0.34)
-		var mr: float = 23.0 * _target_marker_scale
-		draw_circle(mc, mr, Color(0.08, 0.14, 0.22, 0.90))
-		draw_arc(mc, mr, 0.0, TAU, 24, TCGTheme.GOLD_L, 2.8)
-		draw_line(mc + Vector2(-8.0, 1.0) * _target_marker_scale, mc + Vector2(-1.5, 7.5) * _target_marker_scale, TCGTheme.GREEN, 3.2)
-		draw_line(mc + Vector2(-1.5, 7.5) * _target_marker_scale, mc + Vector2(9.0, -6.5) * _target_marker_scale, TCGTheme.GREEN, 3.2)
+		var mc := Vector2(r.get_center().x, r.position.y + r.size.y * 0.42)
+		var mr: float = 24.0 * _target_marker_scale
+		draw_circle(mc, mr + 5.0, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.24))
+		draw_circle(mc, mr, Color(0.95, 0.76, 0.24, 0.92))
+		draw_arc(mc, mr, 0.0, TAU, 28, Color.WHITE, 2.4)
+		draw_line(mc + Vector2(-8.0, 1.0) * _target_marker_scale, mc + Vector2(-1.5, 7.5) * _target_marker_scale, Color.WHITE, 3.4)
+		draw_line(mc + Vector2(-1.5, 7.5) * _target_marker_scale, mc + Vector2(9.0, -6.5) * _target_marker_scale, Color.WHITE, 3.4)
 
-	# Combat / Action Forecast Overlay (shows expected DMG, HP delta, reactions, shields, KO, etc.)
+	# Clean Genshin-style Combat / Action Forecast Overlay (inline HP badge + golden target check)
 	_draw_action_preview(r, art_rect)
 
 
@@ -618,104 +638,86 @@ func _draw_action_preview(r: Rect2, art_rect: Rect2) -> void:
 		return
 
 	var total_dmg: int = int(preview_info.get("total_dmg", 0))
-	var hp_before: int = int(preview_info.get("hp_before", char_state.hp if char_state != null else 0))
-	var hp_after: int = int(preview_info.get("hp_after", hp_before))
 	var shield_dmg: int = int(preview_info.get("shield_dmg", 0))
 	var dtype: String = String(preview_info.get("dtype", ""))
 	var reaction: String = String(preview_info.get("reaction", ""))
 	var swirled: String = String(preview_info.get("swirled", ""))
 	var new_aura: String = String(preview_info.get("new_aura", ""))
-	var frozen_now: bool = bool(preview_info.get("frozen", false))
+	var aura_cleared: String = String(preview_info.get("aura_cleared", ""))
 	var defeated_now: bool = bool(preview_info.get("defeated", false))
-	var forced_out: bool = bool(preview_info.get("forced_switch_out", false))
 	var forced_in: bool = bool(preview_info.get("forced_switch_in", false))
 	var heal_amt: int = int(preview_info.get("heal", 0))
 	var shield_gain: int = int(preview_info.get("shield_gain", 0))
 	var switch_in: bool = bool(preview_info.get("switch_in", false))
 
-	var pw: float = clampf(r.size.x - 16.0, 108.0, r.size.x - 10.0)
-	var px: float = r.get_center().x - pw * 0.5
-	var py: float = art_rect.position.y + clampf(art_rect.size.y * 0.25, 36.0, 56.0)
-	var max_py: float = art_rect.end.y - 6.0
+	var impacted: bool = (total_dmg > 0 or defeated_now or not reaction.is_empty() or not aura_cleared.is_empty() or forced_in or heal_amt > 0 or shield_gain > 0 or switch_in)
+	if not impacted:
+		return
 
-	# Highlight frame border for impacted targets
-	if total_dmg > 0 or defeated_now or not reaction.is_empty() or forced_in or heal_amt > 0 or shield_gain > 0:
-		var ring_col := TCGTheme.RED if defeated_now else (
+	# Clean luminous gold/element highlight rim around impacted card
+	var ring_col := TCGTheme.RED if defeated_now else (
+		TCGTheme.elem_color("Anemo") if (not aura_cleared.is_empty() and total_dmg == 0) else (
 			TCGTheme.HEAL if (heal_amt > 0 and total_dmg == 0) else (
-				TCGTheme.TEAL if (shield_gain > 0 and total_dmg == 0) else (
-					TCGTheme.elem_color(dtype) if not dtype.is_empty() else TCGTheme.GOLD_L
-				)
+				TCGTheme.TEAL if (shield_gain > 0 and total_dmg == 0) else TCGTheme.GOLD_L
 			)
 		)
-		TCGTheme.draw_rounded_box(self, r.grow(1.5), Color(0, 0, 0, 0.0), ring_col, 14, 2)
+	)
+	TCGTheme.draw_rounded_box(self, r.grow(2.5), Color(ring_col.r, ring_col.g, ring_col.b, 0.08), ring_col, 14, 2.5)
 
-	# 1. Expected Damage pill
+	# 1. Genshin-style crimson `-DMG` pill right beside top-left HP shield + golden target checkmark!
 	if total_dmg > 0:
-		var el_col := TCGTheme.elem_color(dtype) if not dtype.is_empty() else TCGTheme.GOLD_L
-		var pill_col := TCGTheme.RED if defeated_now else el_col
-		var bg_col := Color(0.24, 0.05, 0.06, 0.94) if defeated_now else Color(0.06, 0.09, 0.15, 0.94)
-		var dmg_h: float = 40.0 if (py + 44.0 <= max_py) else maxf(26.0, max_py - py)
-		var drect := Rect2(px, py, pw, dmg_h)
-		TCGTheme.draw_rounded_box(self, drect, bg_col, pill_col, 8, 2, Vector2(0, 2), 110)
+		var badge_w: float = 52.0 if not defeated_now else 66.0
+		var badge_r := Rect2(r.position.x + 38.0, r.position.y + 4.0, badge_w, 26.0)
+		var bg_c := Color8(186, 44, 42) if not defeated_now else Color8(142, 22, 26)
+		TCGTheme.draw_rounded_box(self, badge_r, bg_c, TCGTheme.GOLD_L if not defeated_now else Color(1.0, 0.65, 0.65), 11, 1.8, Vector2(0, 2), 95)
+		var txt := ("-%d KO" % total_dmg) if defeated_now else ("-%d" % total_dmg)
+		TCGTheme.draw_text_centered(self, txt, badge_r.get_center(), 15 if not defeated_now else 13, Color.WHITE, true, true)
 
-		var main_lbl := "-%d %s" % [total_dmg, "PIERCE" if dtype == CardDataSystem.PIERCING else "DMG"]
-		TCGTheme.draw_text_centered(self, main_lbl, Vector2(drect.get_center().x, drect.position.y + 13.0), 16, TCGTheme.GOLD_L if not defeated_now else Color(1.0, 0.85, 0.85), true, false)
+		# Centered golden target checkmark on primary struck card (non-piercing or active target)
+		if dtype != CardDataSystem.PIERCING:
+			var mc := art_rect.get_center()
+			draw_circle(mc, 24.0, Color(0.96, 0.78, 0.24, 0.88))
+			draw_arc(mc, 24.0, 0.0, TAU, 24, Color.WHITE, 2.4)
+			draw_line(mc + Vector2(-8.0, 1.0), mc + Vector2(-1.5, 7.5), Color.WHITE, 3.4)
+			draw_line(mc + Vector2(-1.5, 7.5), mc + Vector2(9.0, -6.5), Color.WHITE, 3.4)
+		if shield_dmg > 0:
+			var sh_r := Rect2(r.position.x + 38.0, r.position.y + 33.0, 56.0, 20.0)
+			TCGTheme.draw_rounded_box(self, sh_r, Color(0.08, 0.16, 0.24, 0.94), TCGTheme.TEAL, 8, 1.2)
+			TCGTheme.draw_text_centered(self, "Sh -%d" % shield_dmg, sh_r.get_center(), 11, Color.WHITE, true, false)
 
-		if dmg_h >= 36.0:
-			var sub_lbl := ("KO! (%d->0)" % hp_before) if defeated_now else (
-				("Sh-%d  %d->%d" % [shield_dmg, hp_before, hp_after]) if shield_dmg > 0 else ("HP %d->%d" % [hp_before, hp_after])
-			)
-			var sub_col := TCGTheme.RED if defeated_now else (TCGTheme.TEAL if shield_dmg > 0 else TCGTheme.TEXT)
-			TCGTheme.draw_text_centered(self, sub_lbl, Vector2(drect.get_center().x, drect.position.y + 30.0), 12, sub_col, true, false)
-		py += dmg_h + 5.0
-
-	# 2. Elemental Reaction pill
-	if not reaction.is_empty() and py + 24.0 <= max_py:
+	# 2. Sleek Reaction / New Aura pill cleanly ABOVE the card (never blocking portrait)
+	if not reaction.is_empty():
 		var rx_els: Array = TCGTheme.REACT.get(reaction, {}).get("elements", [])
-		var rx_col: Color = TCGTheme.GOLD_L
-		if not rx_els.is_empty():
-			rx_col = TCGTheme.elem_color(String(rx_els[rx_els.size() - 1]))
-		var rx_sub := "SWAP OUT!" if forced_out else ("FROZEN!" if frozen_now else "")
-		var rx_h: float = 34.0 if (not rx_sub.is_empty() and py + 34.0 <= max_py) else 24.0
-		var rrect := Rect2(px, py, pw, rx_h)
-		TCGTheme.draw_rounded_box(self, rrect, Color(0.11, 0.08, 0.05, 0.95), rx_col, 7, 2)
-		var rx_title := reaction.to_upper()
-		if not swirled.is_empty():
-			rx_title = "SWIRL (%s)" % swirled.to_upper()
-		if rx_h >= 32.0:
-			TCGTheme.draw_text_centered(self, rx_title, Vector2(rrect.get_center().x, rrect.position.y + 11.0), 12, rx_col.lightened(0.28), true, false)
-			TCGTheme.draw_text_centered(self, rx_sub, Vector2(rrect.get_center().x, rrect.position.y + 25.0), 11, TCGTheme.GOLD_L, true, false)
-		else:
-			TCGTheme.draw_text_centered(self, rx_title, rrect.get_center(), 12, rx_col.lightened(0.28), true, false)
-		py += rx_h + 5.0
-	elif not new_aura.is_empty() and py + 22.0 <= max_py:
+		var rx_col: Color = TCGTheme.elem_color(String(rx_els[rx_els.size() - 1])) if not rx_els.is_empty() else TCGTheme.GOLD_L
+		var rx_title := ("SWIRL · %s" % swirled.to_upper()) if not swirled.is_empty() else reaction.to_upper()
+		var rrect := Rect2(r.get_center().x - 68.0, r.position.y - 30.0, 136.0, 24.0)
+		TCGTheme.draw_rounded_box(self, rrect, Color(0.08, 0.06, 0.04, 0.94), rx_col, 10, 1.8)
+		TCGTheme.draw_text_centered(self, rx_title, rrect.get_center(), 12, TCGTheme.GOLD_L, true, true)
+	elif not new_aura.is_empty() and total_dmg > 0:
 		var acol := TCGTheme.elem_color(new_aura)
-		var arect := Rect2(px + 6.0, py, pw - 12.0, 22.0)
-		TCGTheme.draw_rounded_box(self, arect, Color(0.06, 0.09, 0.14, 0.92), acol, 6, 1)
-		TCGTheme.draw_text_centered(self, "+ %s AURA" % new_aura.to_upper(), arect.get_center(), 11, acol.lightened(0.32), true, false)
-		py += 26.0
+		var arect := Rect2(r.get_center().x - 46.0, r.position.y - 26.0, 92.0, 21.0)
+		TCGTheme.draw_rounded_box(self, arect, Color(0.06, 0.09, 0.14, 0.92), acol, 9, 1.4)
+		TCGTheme.draw_text_centered(self, "+ %s" % new_aura, arect.get_center(), 11, acol.lightened(0.3), true, false)
 
-	# 3. Forced Switch target indicator
-	if forced_in and py + 24.0 <= max_py:
-		var frect := Rect2(px, py, pw, 24.0)
-		TCGTheme.draw_rounded_box(self, frect, Color(0.14, 0.09, 0.04, 0.94), TCGTheme.GOLD_L, 7, 2)
-		TCGTheme.draw_text_centered(self, "FORCED ACTIVE", frect.get_center(), 12, TCGTheme.GOLD_L, true, false)
-		py += 28.0
+	# 3. Ally Heal / Shield / Forced-Switch compact pills beside HP shield
+	if heal_amt > 0:
+		var hrect := Rect2(r.position.x + 38.0, r.position.y + 4.0, 56.0, 26.0)
+		TCGTheme.draw_rounded_box(self, hrect, Color(0.08, 0.34, 0.16, 0.96), TCGTheme.HEAL, 11, 1.8)
+		TCGTheme.draw_text_centered(self, "+%d" % heal_amt, hrect.get_center(), 15, Color.WHITE, true, true)
 
-	# 4. Ally healing / shield / switch-in pills
-	if heal_amt > 0 and py + 24.0 <= max_py:
-		var hrect := Rect2(px + 4.0, py, pw - 8.0, 24.0)
-		TCGTheme.draw_rounded_box(self, hrect, Color(0.06, 0.16, 0.09, 0.94), TCGTheme.HEAL, 7, 2)
-		TCGTheme.draw_text_centered(self, "+%d HP" % heal_amt, hrect.get_center(), 14, TCGTheme.HEAL, true, false)
-		py += 28.0
+	if shield_gain > 0:
+		var sy: float = r.position.y + (34.0 if heal_amt > 0 else 4.0)
+		var srect := Rect2(r.position.x + 38.0, sy, 66.0, 24.0)
+		TCGTheme.draw_rounded_box(self, srect, Color(0.08, 0.20, 0.30, 0.96), TCGTheme.TEAL, 10, 1.6)
+		TCGTheme.draw_text_centered(self, "+%d SHD" % shield_gain, srect.get_center(), 12, Color.WHITE, true, false)
 
-	if shield_gain > 0 and py + 24.0 <= max_py:
-		var srect := Rect2(px + 4.0, py, pw - 8.0, 24.0)
-		TCGTheme.draw_rounded_box(self, srect, Color(0.06, 0.13, 0.18, 0.94), TCGTheme.TEAL, 7, 2)
-		TCGTheme.draw_text_centered(self, "+%d SHIELD" % shield_gain, srect.get_center(), 13, TCGTheme.TEAL, true, false)
-		py += 28.0
+	if not aura_cleared.is_empty():
+		var cl_col := TCGTheme.elem_color("Anemo")
+		var crect := Rect2(r.get_center().x - 62.0, r.position.y - 30.0, 124.0, 24.0)
+		TCGTheme.draw_rounded_box(self, crect, Color(0.05, 0.16, 0.16, 0.96), cl_col, 10, 1.8)
+		TCGTheme.draw_text_centered(self, "CLEANSE %s" % aura_cleared.to_upper(), crect.get_center(), 11, cl_col.lightened(0.3), true, true)
 
-	if switch_in and py + 24.0 <= max_py:
-		var wrect := Rect2(px + 4.0, py, pw - 8.0, 24.0)
-		TCGTheme.draw_rounded_box(self, wrect, Color(0.07, 0.11, 0.18, 0.94), TCGTheme.GOLD, 7, 1)
-		TCGTheme.draw_text_centered(self, "SWITCH IN", wrect.get_center(), 12, TCGTheme.GOLD_L, true, false)
+	if forced_in or switch_in:
+		var wrect := Rect2(r.get_center().x - 54.0, r.position.y - 26.0, 108.0, 22.0)
+		TCGTheme.draw_rounded_box(self, wrect, Color(0.14, 0.10, 0.05, 0.94), TCGTheme.GOLD_L, 9, 1.5)
+		TCGTheme.draw_text_centered(self, "FORCED IN" if forced_in else "ACTIVE", wrect.get_center(), 11, TCGTheme.GOLD_L, true, false)

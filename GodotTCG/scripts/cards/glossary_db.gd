@@ -38,7 +38,7 @@ const REACTION_ENTRIES: Dictionary = {
 	"Swirl": {
 		"title": "Swirl (Anemo + Aura)",
 		"elements": ["Anemo"],
-		"body": "Consumes {el:Pyro}, {el:Hydro}, {el:Cryo}, or {el:Electro} on the target and deals {num:1} Elemental DMG of the swirled type to all standby opposing characters.",
+		"body": "Consumes {el:Pyro}, {el:Hydro}, {el:Cryo}, or {el:Electro} on the target and deals {num:2} Elemental DMG of the swirled type to all standby opposing characters (Aang).",
 	},
 	"Crystallize": {
 		"title": "Crystallize (Geo + Aura)",
@@ -66,6 +66,10 @@ const KEYWORD_ENTRIES: Dictionary = {
 	},
 	"Petrified": {
 		"title": "Petrified",
+		"body": "Affected character cannot use skills until the end of the round.",
+	},
+	"Stunned": {
+		"title": "Stunned",
 		"body": "Affected character cannot use skills until the end of the round.",
 	},
 	"Piercing DMG": {

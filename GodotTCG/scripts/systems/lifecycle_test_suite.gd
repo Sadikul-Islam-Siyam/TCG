@@ -5,7 +5,7 @@ extends RefCounted
 ## - Setup flow (initialization, mulligan order, simultaneous active character reveal)
 ## - Roll phase flow (8 dice rolled, 1 reroll limit, confirm_roll transition)
 ## - Action phase flow (combat vs fast actions, zero-dice boundary case, end_round & first_ender priority)
-## - End phase flow (summon & support order, Frozen/Petrified clear, duration tick, per_round reset, draw 2 with 10-card cap)
+## - End phase flow (Frozen/Petrified/Stunned clear, duration tick, Dice Carryover -> Omni dice, draw 2 with 10-card cap)
 ## - Invalid timing / phase / actor rejection across all states
 ## - Win, Defeat, Pending forced switch, and simultaneous Draw (-1) termination
 ## - 60 full simulated games (`TCGMatchLifecycle.play_simulated_game`) completing cleanly.
@@ -19,7 +19,7 @@ static func run_all_tests() -> Dictionary:
 		["lifecycle_03_roll_phase_reroll_limit_and_transition", Callable(TCGLifecycleTestSuite, "_test_roll_phase_and_reroll")],
 		["lifecycle_04_action_phase_zero_dice_boundary_case", Callable(TCGLifecycleTestSuite, "_test_zero_dice_boundary")],
 		["lifecycle_05_first_ender_inherits_next_round_priority", Callable(TCGLifecycleTestSuite, "_test_first_ender_priority")],
-		["lifecycle_06_end_phase_ordering_thaw_tick_and_hand_cap", Callable(TCGLifecycleTestSuite, "_test_end_phase_full_sequence")],
+		["lifecycle_06_end_phase_ordering_thaw_tick_and_carryover", Callable(TCGLifecycleTestSuite, "_test_end_phase_full_sequence")],
 		["lifecycle_07_dice_cap_at_16_and_hand_cap_at_10", Callable(TCGLifecycleTestSuite, "_test_resource_caps")],
 		["lifecycle_08_invalid_phase_and_turn_timing_rejections", Callable(TCGLifecycleTestSuite, "_test_invalid_phase_and_timing")],
 		["lifecycle_09_simultaneous_defeat_tie_handling", Callable(TCGLifecycleTestSuite, "_test_simultaneous_tie")],
@@ -45,9 +45,9 @@ static func run_all_tests() -> Dictionary:
 
 
 static func _test_init_and_setup_order() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), 10)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var c1 := ["Zuko", "Azula", "Iroh"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), 10)
 	if s.phase != "setup" or s.round_number != 1:
 		return "Expected setup phase round 1"
 	var fp: int = s.first_player
@@ -87,17 +87,17 @@ static func _test_init_and_setup_order() -> String:
 
 
 static func _test_mulligan_partial_swap() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 7)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 7)
 	var fp: int = s.first_player
-	s.players[fp].hand = ["Minor Heal", "Tactical Draw", "Power Boost", "Energy Charge", "Quick Rally"]
+	s.players[fp].hand = ["Active Character Healing", "Draw Cards", "Elemental Dice", "Omni Conversion", "Party Healing"]
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("mulligan", fp, -1, -1, [], [0, 2, 4]))
 	if not TCGRulesEngine.last_error.is_empty():
 		return "Unexpected mulligan error: %s" % TCGRulesEngine.last_error
 	var expected_deck := TCGDeckSystem.DECK_SIZE - 5
 	if s.players[fp].hand.size() != 5 or s.players[fp].deck.size() != expected_deck:
 		return "Hand and deck sizes must remain 5 and %d after mulligan" % expected_deck
-	if s.players[fp].hand[0] != "Tactical Draw" or s.players[fp].hand[1] != "Energy Charge":
+	if s.players[fp].hand[0] != "Draw Cards" or s.players[fp].hand[1] != "Omni Conversion":
 		return "Unselected hand cards should remain in order at the front of hand"
 	# Second mulligan by same player must be rejected
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("mulligan", fp))
@@ -107,8 +107,8 @@ static func _test_mulligan_partial_swap() -> String:
 
 
 static func _test_roll_phase_and_reroll() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 12)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 12)
 	# Complete setup
 	for _i in range(4):
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
@@ -140,8 +140,8 @@ static func _test_roll_phase_and_reroll() -> String:
 
 
 static func _test_zero_dice_boundary() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
 	var p_idx: int = TCGRulesEngine.actor(s)
@@ -156,8 +156,8 @@ static func _test_zero_dice_boundary() -> String:
 
 
 static func _test_first_ender_priority() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
 	s.first_player = 0
@@ -185,17 +185,18 @@ static func _test_first_ender_priority() -> String:
 
 
 static func _test_end_phase_full_sequence() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), 5)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var c1 := ["Zuko", "Azula", "Iroh"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), 5)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
-	# Apply Frozen to P0 active, Petrified to P1 active, Attack +1 (duration=1) and Attack +2 (set duration=2) to P0 combat
+	# Apply Frozen, Petrified, Stunned, Attack +1 (duration=1), and Dice Carryover with 2 leftover dice
 	TCGRulesEngine.add_status(s.players[0].characters[0].statuses, "Frozen")
+	TCGRulesEngine.add_status(s.players[0].characters[1].statuses, "Stunned")
 	TCGRulesEngine.add_status(s.players[1].characters[0].statuses, "Petrified")
 	TCGRulesEngine.add_status(s.players[0].combat, "Attack +1")
-	var atk2 := TCGRulesEngine.add_status(s.players[0].combat, "Attack +2")
-	atk2.duration = 2
+	TCGRulesEngine.add_status(s.players[0].combat, "Dice Carryover")
+	s.players[0].dice = [CardDataSystem.PYRO, CardDataSystem.GEO]
 
 	# End round for both players
 	var a0 := TCGRulesEngine.actor(s)
@@ -204,18 +205,24 @@ static func _test_end_phase_full_sequence() -> String:
 
 	if TCGRulesEngine.has_status(s.players[0].characters[0], "Frozen"):
 		return "Frozen must be removed at End Phase"
+	if TCGRulesEngine.has_status(s.players[0].characters[1], "Stunned"):
+		return "Stunned must be removed at End Phase"
 	if TCGRulesEngine.has_status(s.players[1].characters[0], "Petrified"):
 		return "Petrified must be removed at End Phase"
 	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") != null:
 		return "Attack +1 (duration=1) should expire at End Phase"
-	if atk2.duration != 1:
-		return "Attack +2 duration should tick from 2 to 1"
+	if TCGRulesEngine.find_status(s.players[0].combat, "Dice Carryover") != null:
+		return "Dice Carryover should expire at End Phase"
+	if s.players[0].dice.size() != 10:
+		return "Dice Carryover should carry 2 leftover dice into Round 2 (8 + 2 = 10 dice), got %d" % s.players[0].dice.size()
+	if s.players[0].dice[8] != CardDataSystem.OMNI or s.players[0].dice[9] != CardDataSystem.OMNI:
+		return "Carried-over dice must be converted to Omni Dice"
 	return ""
 
 
 static func _test_resource_caps() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 1)
 	while s.phase != "action":
 		TCGRulesEngine.apply_action(s, TCGRulesEngine.legal_actions(s)[0])
 	# Test MAX_DICE = 16 cap
@@ -242,11 +249,11 @@ static func _test_resource_caps() -> String:
 
 
 static func _test_invalid_phase_and_timing() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 2)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 2)
 	var fp: int = s.first_player
 
-	# Trychoose_active before mulligan in setup
+	# Try choose_active before mulligan in setup
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("choose_active", fp, 0))
 	if TCGRulesEngine.last_error != "mulligan first":
 		return "Expected 'mulligan first', got '%s'" % TCGRulesEngine.last_error
@@ -274,7 +281,7 @@ static func _test_invalid_phase_and_timing() -> String:
 	if TCGRulesEngine.last_error != "confirm_roll not allowed now":
 		return "Expected 'confirm_roll not allowed now', got '%s'" % TCGRulesEngine.last_error
 
-	# Trigger pending forced switch and try skill before choosing active character
+	# Trigger pending forced switch and try end_round before choosing active character
 	TCGRulesEngine.deal_damage(s, fp, 1 - fp, 0, 99, CardDataSystem.PHYSICAL, "effect", "")
 	if s.pending != [1 - fp]:
 		return "Expected pending forced switch for 1 - fp"
@@ -285,8 +292,8 @@ static func _test_invalid_phase_and_timing() -> String:
 
 
 static func _test_simultaneous_tie() -> String:
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c0, CardDataSystem.starter_deck(), 1)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c0, CardDataSystem.starter_deck(c0), 1)
 	for p in s.players:
 		for ch in p.characters:
 			ch.defeated = true
@@ -299,8 +306,8 @@ static func _test_simultaneous_tie() -> String:
 
 static func _test_lifecycle_controller() -> String:
 	var lc := TCGMatchLifecycle.new()
-	var c0 := ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
-	var c1 := ["Hydro Cleric", "Geo Guardian", "Anemo Scout"]
+	var c0 := ["Aang", "Katara", "Toph"]
+	var c1 := ["Zuko", "Azula", "Iroh"]
 	var bot0 := TCGRandomAI.new(10)
 	var bot1 := TCGRandomAI.new(11)
 	lc.start_match(c0, TCGDeckSystem.build_preset(c0), c1, TCGDeckSystem.build_preset(c1), 10, [bot0, bot1])
@@ -317,7 +324,6 @@ static func _test_lifecycle_controller() -> String:
 
 
 static func _test_sixty_full_games() -> String:
-	# Mirrors `test_engine.py:test_many_random_games_finish_without_errors` (60 full games)
 	for seed_val in range(1, 61):
 		var sim := TCGMatchLifecycle.play_simulated_game(seed_val)
 		var s: TCGGameState = sim["state"]
@@ -330,4 +336,3 @@ static func _test_sixty_full_games() -> String:
 			if TCGRulesEngine.legal_actions(s).is_empty():
 				return "Seed %d got stuck with 0 legal actions" % seed_val
 	return ""
-

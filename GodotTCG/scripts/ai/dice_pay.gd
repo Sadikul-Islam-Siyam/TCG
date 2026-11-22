@@ -13,6 +13,40 @@ static func smart_pay(dice: Array, cost: CardDataSystem.CostData, keep: Array = 
 		return empty
 
 	var n_dice: int = dice.size()
+	if cost.n + cost.unaligned > n_dice:
+		return null
+
+	if cost.n > 0 and cost.element.is_empty():
+		var el_counts: Dictionary = {}
+		var omni_n: int = 0
+		for d in dice:
+			var ds: String = str(d)
+			if ds == CardDataSystem.OMNI:
+				omni_n += 1
+			else:
+				el_counts[ds] = int(el_counts.get(ds, 0)) + 1
+		var k_map: Dictionary = {}
+		for k_el in keep:
+			k_map[str(k_el)] = true
+		var cand_els: Array[String] = []
+		for el in el_counts.keys():
+			if int(el_counts[el]) + omni_n >= cost.n:
+				cand_els.append(str(el))
+		cand_els.sort_custom(func(a: String, b: String) -> bool:
+			var wa: float = (3.0 if k_map.has(a) else 1.0) / float(el_counts[a])
+			var wb: float = (3.0 if k_map.has(b) else 1.0) / float(el_counts[b])
+			if wa != wb:
+				return wa < wb
+			return a < b
+		)
+		for el in cand_els:
+			var sub = smart_pay(dice, CardDataSystem.CostData.new(el, cost.n, cost.unaligned, cost.energy), keep)
+			if sub != null:
+				return sub
+		if omni_n >= cost.n:
+			return smart_pay(dice, CardDataSystem.CostData.new(CardDataSystem.OMNI, cost.n, cost.unaligned, cost.energy), keep)
+		return null
+
 	var ok_el: Array[int] = []
 	var all_idx: Array[int] = []
 	for i in range(n_dice):

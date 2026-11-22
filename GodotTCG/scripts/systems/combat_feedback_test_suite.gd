@@ -70,20 +70,20 @@ static func _test_element_set_and_dice_preservation() -> String:
 		if String(el).to_lower() == "dendro":
 			return "Dendro was reintroduced into ELEMENTS, which violates rule!"
 
-	# 2. Dice faces check: 7 faces (Omni + 6 elements)
-	var expected_dice: Array[String] = ["Cryo", "Hydro", "Pyro", "Electro", "Anemo", "Geo", "Omni"]
-	if CardDataSystem.DICE_FACES.size() != 7:
-		return "Expected 7 dice faces, got %d" % CardDataSystem.DICE_FACES.size()
+	# 2. Dice faces check: 6 active faces (Cryo excluded from rolls; Omni + 5 elements)
+	var expected_dice: Array[String] = ["Hydro", "Pyro", "Electro", "Anemo", "Geo", "Omni"]
+	if CardDataSystem.DICE_FACES.size() != 6:
+		return "Expected 6 active dice faces (Cryo excluded), got %d" % CardDataSystem.DICE_FACES.size()
 	for df in expected_dice:
 		if not CardDataSystem.DICE_FACES.has(df):
 			return "Missing dice face: %s" % df
 	for df in CardDataSystem.DICE_FACES:
-		if String(df).to_lower() == "dendro":
-			return "Dendro was reintroduced into DICE_FACES, which violates rule!"
+		if String(df).to_lower() == "dendro" or String(df).to_lower() == "cryo":
+			return "Excluded element %s found in DICE_FACES!" % df
 
 	# 3. Weights check
-	if CardDataSystem.DICE_WEIGHTS.size() != 7:
-		return "Expected 7 weights, got %d" % CardDataSystem.DICE_WEIGHTS.size()
+	if CardDataSystem.DICE_WEIGHTS.size() != 6:
+		return "Expected 6 weights, got %d" % CardDataSystem.DICE_WEIGHTS.size()
 	var w_sum: float = 0.0
 	for w in CardDataSystem.DICE_WEIGHTS:
 		w_sum += w
@@ -167,11 +167,11 @@ static func _test_dice_tray_roll_and_tune_animation_state() -> String:
 static func _test_skill_cost_indicators_and_affordability() -> String:
 	CardDataSystem.load_all_content()
 	var bar := TCGSkillBar.new()
-	var ch := TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10, 0)
+	var ch := TCGPlayerSystem.CharacterInstance.new("Zuko", 10, 0)
 	var d: CardDataSystem.CharData = ch.get_defn()
 	if d == null:
 		bar.free()
-		return "Failed to load Pyro Vanguard definition"
+		return "Failed to load Zuko definition"
 
 	# Setup with normal skill usable, but burst unusable (0 energy)
 	var usable: Array[bool] = [true, true, false]
@@ -266,7 +266,7 @@ static func _test_skill_burst_and_defeat_ribbons() -> String:
 			"kind": "skill",
 			"player": scene.view_player,
 			"char": 0,
-			"skill": "Crimson Nova",
+			"skill": "Dragon's Roar",
 			"skill_kind": "burst",
 		},
 		{
@@ -284,14 +284,14 @@ static func _test_skill_burst_and_defeat_ribbons() -> String:
 
 	var found_burst_ribbon: bool = false
 	for rb in scene._ribbons:
-		if rb["title"] == "Crimson Nova":
+		if rb["title"] == "Dragon's Roar":
 			found_burst_ribbon = true
 			if not String(rb["sub"]).contains("Elemental Burst"):
 				scene.free()
 				return "Burst ribbon subtitle missing 'Elemental Burst': %s" % rb["sub"]
 	if not found_burst_ribbon:
 		scene.free()
-		return "Burst ribbon for Crimson Nova was not created"
+		return "Burst ribbon for Dragon's Roar was not created"
 
 	# Verify defeat ribbon
 	var found_defeat_ribbon: bool = false
@@ -344,7 +344,7 @@ static func _test_character_lunge_and_hit_shake() -> String:
 
 	# Present skill and damage
 	var events: Array = [
-		{"kind": "skill", "player": scene.view_player, "char": 0, "skill": "Flame Strike", "skill_kind": "normal"},
+		{"kind": "skill", "player": scene.view_player, "char": 0, "skill": "Flame Slash", "skill_kind": "normal"},
 		{"kind": "damage", "player": 1 - scene.view_player, "char": 0, "amount": 2, "dtype": "Physical", "reaction": null},
 	]
 	scene._present_events(events)

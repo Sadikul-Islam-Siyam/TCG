@@ -229,19 +229,19 @@ func _capture_stage7_screenshots() -> void:
 		board.view_player = act_p
 		board.human_flags[act_p] = true
 	var p := board.me()
-	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Electro Ranger", 10, 2)
-	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10, 1)
-	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 10, 0)
+	p.characters[0] = TCGPlayerSystem.CharacterInstance.new("Azula", 10, 1)
+	p.characters[1] = TCGPlayerSystem.CharacterInstance.new("Zuko", 10, 1)
+	p.characters[2] = TCGPlayerSystem.CharacterInstance.new("Aang", 10, 0)
 	p.active = 0
 
 	var foe := board.game_state.players[1 - board.view_player]
-	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 6, 1)
-	foe.characters[0].aura = "Pyro" # Pyro Vanguard has Pyro aura -> Electro triggers Overloaded!
-	foe.characters[1] = TCGPlayerSystem.CharacterInstance.new("Cryo Knight", 8, 1)
-	foe.characters[2] = TCGPlayerSystem.CharacterInstance.new("Hydro Cleric", 10, 0)
+	foe.characters[0] = TCGPlayerSystem.CharacterInstance.new("Iroh", 6, 1)
+	foe.characters[0].aura = "Pyro" # Iroh has Pyro aura -> Azula Electro triggers Overloaded!
+	foe.characters[1] = TCGPlayerSystem.CharacterInstance.new("Katara", 8, 1)
+	foe.characters[2] = TCGPlayerSystem.CharacterInstance.new("Toph", 10, 0)
 	foe.active = 0
 
-	p.dice.assign(["Omni", "Electro", "Electro", "Electro", "Pyro", "Hydro", "Cryo", "Geo"])
+	p.dice.assign(["Omni", "Electro", "Electro", "Electro", "Pyro", "Hydro", "Anemo", "Geo"])
 	board.sync_from_state()
 
 	# Present combat burst + reaction events
@@ -250,7 +250,7 @@ func _capture_stage7_screenshots() -> void:
 			"kind": "skill",
 			"player": board.view_player,
 			"char": 0,
-			"skill": "Storm Volley",
+			"skill": "Thunder Judgement",
 			"skill_kind": "burst",
 		},
 		{
@@ -326,7 +326,7 @@ func _capture_stage10_screenshots() -> void:
 	# 2. Capture Deck Builder populated with 3 characters + CSP-autofilled cards
 	show_deck_builder()
 	var db: TCGDeckBuilderScene = current_screen as TCGDeckBuilderScene
-	db.chars = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"]
+	db.chars = ["Aang", "Katara", "Toph"]
 	db.press("fill")
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
@@ -363,7 +363,7 @@ func _capture_audit_screenshots() -> void:
 	# 2. Deck Builder Load Modal (verifies _modal_layer cleanly covers _search_edit)
 	show_deck_builder()
 	var db: TCGDeckBuilderScene = current_screen as TCGDeckBuilderScene
-	db.chars = ["Pyro Vanguard", "Cryo Knight", "Electro Ranger"]
+	db.chars = ["Aang", "Katara", "Toph"]
 	db.press("fill")
 	db.press("load")
 	await _snap(shots_dir, "audit_02_deck_builder_load_modal.png")
@@ -387,9 +387,9 @@ func _capture_audit_screenshots() -> void:
 	board.view_player = board.actor()
 	board.human_flags[board.view_player] = true
 	var p := board.me()
-	p.hand.assign(["Power Boost", "Iron Guard", "Tactical Draw", "Major Heal"])
+	p.hand.assign(["Draw Cards", "Omni Conversion", "Dual Character Healing", "Elemental Dice"])
 	TCGRulesEngine.add_status(p.combat, "Attack +1")
-	p.characters[0].aura = "Electro"
+	p.characters[0].aura = "Hydro"
 	board.game_state.players[1 - board.view_player].characters[0].aura = "Pyro"
 	board.sync_from_state()
 	board._on_char_slot_clicked(0, 0)
@@ -413,8 +413,8 @@ func _capture_audit_screenshots() -> void:
 	board.start_interactive_match("pve", 0, 1, 42, true)
 	board.view_player = board.actor()
 	board.human_flags[board.view_player] = true
-	board.me().hand.assign(["Power Boost", "Iron Guard", "Tactical Draw", "Major Heal", "Quick Rally"])
-	board.me().characters[0].aura = "Electro"
+	board.me().hand.assign(["Draw Cards", "Omni Conversion", "Dual Character Healing", "Elemental Dice", "Swap Cards"])
+	board.me().characters[0].aura = "Hydro"
 	board.game_state.players[1 - board.view_player].characters[0].aura = "Pyro"
 	board.sync_from_state()
 	if board.detail_drawer != null:

@@ -39,8 +39,11 @@ func _process(delta: float) -> void:
 	var target := 1.0 if expanded else 0.0
 	if absf(_anim_open - target) > 0.01:
 		_anim_open = lerpf(_anim_open, target, minf(1.0, delta * 14.0))
-		size = _collapsed_size.lerp(_expanded_size, _anim_open)
-		custom_minimum_size = size
+		if absf(_anim_open - target) <= 0.01:
+			_anim_open = target
+		var next_sz: Vector2 = _collapsed_size.lerp(_expanded_size, _anim_open)
+		custom_minimum_size = next_sz
+		size = next_sz
 		queue_redraw()
 
 

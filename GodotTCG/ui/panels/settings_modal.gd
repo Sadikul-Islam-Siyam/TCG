@@ -11,15 +11,25 @@ signal confirm_end_round_changed(enabled: bool)
 signal restart_requested
 signal main_menu_requested
 
-var confirm_end_round: bool = false
+static var saved_speed: float = 1.0
+static var saved_confirm_end_round: bool = true
+static var saved_language: String = "English"
+
+var confirm_end_round: bool = true
 var current_speed: float = 1.0
 var selected_language: String = "English"
+var menu_mode: bool = false
 
 var _backdrop: ColorRect = null
 var _panel: PanelContainer = null
+var _title_lbl: Label = null
 var _speed_buttons: Array[Button] = []
 var _confirm_chk: CheckButton = null
+var _fullscreen_chk: CheckButton = null
 var _lang_btn: OptionButton = null
+var _menu_btn: Button = null
+var _rst_btn: Button = null
+var _ok_btn: Button = null
 var _sliders: Dictionary = {}
 
 
@@ -27,7 +37,22 @@ func _init() -> void:
 	name = "SettingsModal"
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	current_speed = saved_speed
+	confirm_end_round = saved_confirm_end_round
+	selected_language = saved_language
 	_build_ui()
+
+
+func set_menu_mode(is_menu: bool) -> void:
+	menu_mode = is_menu
+	if _title_lbl != null:
+		_title_lbl.text = "GAME SETTINGS" if menu_mode else "MATCH SETTINGS"
+	if _menu_btn != null:
+		_menu_btn.visible = not menu_mode
+	if _rst_btn != null:
+		_rst_btn.visible = not menu_mode
+	if _ok_btn != null:
+		_ok_btn.text = "Close" if menu_mode else "Resume"
 
 
 func _build_ui() -> void:
@@ -60,12 +85,12 @@ func _build_ui() -> void:
 	# Header
 	var hdr := HBoxContainer.new()
 	root.add_child(hdr)
-	var title := Label.new()
-	title.text = "MATCH SETTINGS"
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_theme_font_size_override("font_size", 24)
-	title.add_theme_color_override("font_color", TCGTheme.GOLD_L)
-	hdr.add_child(title)
+	_title_lbl = Label.new()
+	_title_lbl.text = "GAME SETTINGS" if menu_mode else "MATCH SETTINGS"
+	_title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title_lbl.add_theme_font_size_override("font_size", 24)
+	_title_lbl.add_theme_color_override("font_color", TCGTheme.GOLD_L)
+	hdr.add_child(_title_lbl)
 
 	var x_btn := Button.new()
 	x_btn.text = "×"
@@ -130,12 +155,25 @@ func _build_ui() -> void:
 		sp_row.add_child(b)
 		_speed_buttons.append(b)
 
+	# Fullscreen Display Toggle
+	_fullscreen_chk = CheckButton.new()
+	_fullscreen_chk.text = "Fullscreen Display [F11]"
+	_fullscreen_chk.button_pressed = _is_fullscreen()
+	_fullscreen_chk.toggled.connect(func(on: bool) -> void:
+		if DisplayServer.get_name() != "headless":
+			DisplayServer.window_set_mode(
+				DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED
+			)
+	)
+	root.add_child(_fullscreen_chk)
+
 	# Confirm Before End Round Toggle
 	_confirm_chk = CheckButton.new()
 	_confirm_chk.text = "Confirm before End Round"
 	_confirm_chk.button_pressed = confirm_end_round
 	_confirm_chk.toggled.connect(func(on: bool) -> void:
 		confirm_end_round = on
+		saved_confirm_end_round = on
 		confirm_end_round_changed.emit(on)
 	)
 	root.add_child(_confirm_chk)
@@ -155,6 +193,7 @@ func _build_ui() -> void:
 	_lang_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lang_btn.item_selected.connect(func(idx: int) -> void:
 		selected_language = _lang_btn.get_item_text(idx)
+		saved_language = selected_language
 	)
 	lang_row.add_child(_lang_btn)
 
@@ -166,33 +205,43 @@ func _build_ui() -> void:
 	act_row.alignment = BoxContainer.ALIGNMENT_END
 	root.add_child(act_row)
 
-	var menu_btn := Button.new()
-	menu_btn.text = "Main Menu"
-	menu_btn.pressed.connect(func() -> void:
+	_menu_btn = Button.new()
+	_menu_btn.text = "Main Menu"
+	_menu_btn.visible = not menu_mode
+	_menu_btn.pressed.connect(func() -> void:
 		close()
 		main_menu_requested.emit()
 	)
-	act_row.add_child(menu_btn)
+	act_row.add_child(_menu_btn)
 
-	var rst_btn := Button.new()
-	rst_btn.text = "Restart Match"
-	rst_btn.pressed.connect(func() -> void:
+	_rst_btn = Button.new()
+	_rst_btn.text = "Restart Match"
+	_rst_btn.visible = not menu_mode
+	_rst_btn.pressed.connect(func() -> void:
 		close()
 		restart_requested.emit()
 	)
-	act_row.add_child(rst_btn)
+	act_row.add_child(_rst_btn)
 
-	var ok_btn := Button.new()
-	ok_btn.text = "Resume"
-	ok_btn.custom_minimum_size = Vector2(116, 40)
-	ok_btn.pressed.connect(close)
-	act_row.add_child(ok_btn)
+	_ok_btn = Button.new()
+	_ok_btn.text = "Close" if menu_mode else "Resume"
+	_ok_btn.custom_minimum_size = Vector2(116, 40)
+	_ok_btn.pressed.connect(close)
+	act_row.add_child(_ok_btn)
 
 	_refresh_speed_buttons()
 
 
+func _is_fullscreen() -> bool:
+	if DisplayServer.get_name() == "headless":
+		return false
+	var mode := DisplayServer.window_get_mode()
+	return mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+
 func set_speed(val: float) -> void:
 	current_speed = val
+	saved_speed = val
 	_refresh_speed_buttons()
 	speed_changed.emit(val)
 
@@ -211,17 +260,22 @@ func sync_layout(viewport_size: Vector2) -> void:
 		_backdrop.size = viewport_size
 	if _panel != null:
 		var w := minf(540.0, safe.size.x - 40.0)
-		var h := minf(480.0, safe.size.y - 40.0)
+		var h := minf(520.0, safe.size.y - 40.0)
 		_panel.size = Vector2(w, h)
 		_panel.position = safe.position + (safe.size - _panel.size) * 0.5
 
 
 func open() -> void:
+	current_speed = saved_speed
+	confirm_end_round = saved_confirm_end_round
+	selected_language = saved_language
 	for bus in _sliders.keys():
 		if AudioManager != null:
 			(_sliders[bus] as HSlider).value = AudioManager.get_bus_volume_linear(String(bus))
+	if _fullscreen_chk != null:
+		_fullscreen_chk.set_pressed_no_signal(_is_fullscreen())
 	if _confirm_chk != null:
-		_confirm_chk.button_pressed = confirm_end_round
+		_confirm_chk.set_pressed_no_signal(confirm_end_round)
 	_refresh_speed_buttons()
 	sync_layout(get_viewport_rect().size if is_inside_tree() else size)
 	visible = true

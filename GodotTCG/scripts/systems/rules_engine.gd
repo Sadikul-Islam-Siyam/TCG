@@ -69,7 +69,7 @@ static func remove_status(ch: TCGPlayerSystem.CharacterInstance, status_name: St
 
 
 static func stunned(ch: TCGPlayerSystem.CharacterInstance) -> bool:
-	return has_status(ch, "Frozen") or has_status(ch, "Petrified")
+	return has_status(ch, "Frozen") or has_status(ch, "Petrified") or has_status(ch, "Stunned")
 
 
 static func find_status(lst: Array[TCGPlayerSystem.StatusInstance], status_name: String) -> TCGPlayerSystem.StatusInstance:
@@ -355,10 +355,12 @@ static func deal_damage(
 		add_status(tgt.statuses, "Frozen")
 		s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_ADDED, tp, ti, "Frozen", "Cryo", 1, null, 1, "char"))
 	elif reaction == "Swirl":
+		var sw_attacker := s.players[sp].get_active_char()
+		var swirl_dmg: int = 2 if (sw_attacker != null and sw_attacker.name == "Aang") else 1
 		for j in range(p.characters.size()):
 			var c := p.characters[j]
 			if j != ti and not c.defeated:
-				deal_damage(s, sp, tp, j, 1, swirled, "swirl", "")
+				deal_damage(s, sp, tp, j, swirl_dmg, swirled, "swirl", "")
 	elif reaction == "Crystallize":
 		var sh_st := add_status(s.players[sp].combat, "Crystallize Shield")
 		if sh_st != null:
@@ -494,10 +496,20 @@ static func _end_phase(s: TCGGameState) -> void:
 		if s.winner != -2:
 			return
 
-	for p in s.players:
+	var carry_omni: Array[int] = [0, 0]
+	for pi_c in range(s.players.size()):
+		var p := s.players[pi_c]
+		if find_status(p.combat, "Dice Carryover") != null:
+			carry_omni[pi_c] = p.dice.size()
+			var kept_c: Array[TCGPlayerSystem.StatusInstance] = []
+			for st in p.combat:
+				if st.name != "Dice Carryover":
+					kept_c.append(st)
+			p.combat = kept_c
 		for c in p.characters:
 			remove_status(c, "Frozen")
 			remove_status(c, "Petrified")
+			remove_status(c, "Stunned")
 			c.statuses = TCGRoundManager.tick_statuses(c.statuses)
 			TCGRoundManager.reset_round_usages(c.statuses)
 		p.combat = TCGRoundManager.tick_statuses(p.combat)
@@ -506,7 +518,7 @@ static func _end_phase(s: TCGGameState) -> void:
 	for p_idx in order:
 		TCGRoundManager.draw_cards(s, p_idx, CardDataSystem.DRAW_END)
 
-	TCGRoundManager.begin_round(s, false)
+	TCGRoundManager.begin_round(s, false, carry_omni)
 
 
 static func _use_combat(p: TCGPlayerSystem.PlayerState, status_name: String) -> bool:
@@ -526,6 +538,18 @@ static func switch_cost(_p: TCGPlayerSystem.PlayerState) -> CardDataSystem.CostD
 	return CardDataSystem.CostData.new("", 0, 1, 0)
 
 
+static func is_healing_action_card(cd: CardDataSystem.CardData) -> bool:
+	## True for Event action cards whose effect heals characters (subject to once-per-round cap).
+	if cd == null or cd.kind != "event":
+		return false
+	if cd.role == "heal":
+		return true
+	for st in cd.play_steps:
+		if st.op in ["heal", "heal_most_injured", "heal_all", "heal_dual"]:
+			return true
+	return false
+
+
 static func card_targets(p: TCGPlayerSystem.PlayerState, cd: CardDataSystem.CardData) -> Array[int]:
 	## Legal target character indices for `cd` (-1 = no target needed) (`engine/rules.py:_targets`).
 	var al := alive(p)
@@ -539,9 +563,14 @@ static func card_targets(p: TCGPlayerSystem.PlayerState, cd: CardDataSystem.Card
 	if cd.kind == "weapon":
 		var out: Array[int] = []
 		for i in al:
-			var defn: CardDataSystem.CharData = p.characters[i].get_defn()
-			if defn != null and defn.weapon == cd.weapon:
-				out.append(i)
+			var ch_i := p.characters[i]
+			if not cd.char_name.is_empty():
+				if ch_i.name == cd.char_name:
+					out.append(i)
+			else:
+				var defn: CardDataSystem.CharData = ch_i.get_defn()
+				if defn != null and defn.weapon == cd.weapon:
+					out.append(i)
 		return out
 	if cd.kind == "artifact" or cd.needs_char:
 		return al
@@ -622,6 +651,8 @@ static func legal_actions(s: TCGGameState) -> Array[TCGGameState.ActionData]:
 		seen_cards[c_name] = true
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(c_name)
 		if cd == null:
+			continue
+		if is_healing_action_card(cd) and p.heal_card_used:
 			continue
 		var c_pay = TCGDiceSystem.auto_pay(p.dice, cd.cost, elems)
 		if c_pay == null:
@@ -842,8 +873,13 @@ static func _card(s: TCGGameState, a: TCGGameState.ActionData) -> bool:
 	if cd == null or not card_targets(p, cd).has(a.target):
 		last_error = "bad card target"
 		return false
+	if is_healing_action_card(cd) and p.heal_card_used:
+		last_error = "only one healing card per round"
+		return false
 	if not _pay(p, cd.cost, a.dice, s, a.player):
 		return false
+	if is_healing_action_card(cd):
+		p.heal_card_used = true
 	p.hand.remove_at(a.index)
 	s.add_event("card", {"player": a.player, "name": cd.name})
 	s.add_game_event(GameEvent.make(GameEvent.Type.CARD_PLAYED, a.player, a.target, cd.name, cd.resonance, a.index, null, null, cd.kind))
@@ -859,7 +895,7 @@ static func _card(s: TCGGameState, a: TCGGameState.ActionData) -> bool:
 	else:
 		var ctx := TCGEffectContext.new(s, a.player)
 		if not cd.play_steps.is_empty():
-			ctx.execute_steps(cd.play_steps, a.target)
+			ctx.execute_steps(cd.play_steps, a.target, Array(a.ids))
 		elif cd.play.is_valid():
 			cd.play.call(ctx, a.target)
 	TCGTurnManager.check_win(s)
@@ -1199,13 +1235,15 @@ static func _build_action_preview_diff(
 		var ob_aura: String = String(ob["aura"])
 		var oa_aura: String = oc.aura
 		var own_new_aura: String = oa_aura if (not oa_aura.is_empty() and oa_aura != ob_aura) else ""
+		var own_cleared_aura: String = ob_aura if (not ob_aura.is_empty() and oa_aura.is_empty()) else ""
 		var sw_in_own: bool = own_switched and ao_act == i
-		if heal_amt > 0 or sh_gain > 0 or not own_new_aura.is_empty() or sw_in_own:
+		if heal_amt > 0 or sh_gain > 0 or not own_new_aura.is_empty() or not own_cleared_aura.is_empty() or sw_in_own:
 			own_chars[i] = {
 				"heal": heal_amt,
 				"shield_gain": sh_gain,
 				"energy_gain": en_gain,
 				"new_aura": own_new_aura,
+				"aura_cleared": own_cleared_aura,
 				"switch_in": sw_in_own,
 			}
 			var oparts: Array[String] = []
@@ -1213,6 +1251,8 @@ static func _build_action_preview_diff(
 				oparts.append("+%d HP (%d -> %d)" % [heal_amt, int(ob["hp"]), oc.hp])
 			if sh_gain > 0:
 				oparts.append("+%d Shield" % sh_gain)
+			if not own_cleared_aura.is_empty():
+				oparts.append("cleanses %s aura" % own_cleared_aura)
 			if not own_new_aura.is_empty():
 				oparts.append("%s aura" % own_new_aura)
 			if sw_in_own:
@@ -1310,10 +1350,13 @@ static func preview_card(s: TCGGameState, pi: int, hand_idx: int, target_idx: in
 	var elems := _player_elems(p)
 	var real_pay = TCGDiceSystem.auto_pay(p.dice, cd.cost, elems)
 	var has_dice := (real_pay != null)
-	var can_use := (s.phase == "action" and s.pending.is_empty() and s.winner == -2 and has_dice)
+	var heal_blocked := is_healing_action_card(cd) and p.heal_card_used
+	var can_use := (s.phase == "action" and s.pending.is_empty() and s.winner == -2 and has_dice and not heal_blocked)
 	var reason := ""
 	if s.phase != "action":
 		reason = "Playable in Action Phase"
+	elif heal_blocked:
+		reason = "Already used a healing card this round"
 	elif not has_dice:
 		reason = "Not enough matching dice"
 
@@ -1323,6 +1366,7 @@ static func preview_card(s: TCGGameState, pi: int, hand_idx: int, target_idx: in
 	sim.events.clear()
 	sim.game_events.clear()
 	var sim_p := sim.players[pi]
+	sim_p.heal_card_used = false
 	var pay_arr: PackedInt32Array
 	if real_pay != null:
 		pay_arr = real_pay

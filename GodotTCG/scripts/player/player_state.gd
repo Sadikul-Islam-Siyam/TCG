@@ -93,6 +93,7 @@ class PlayerState extends RefCounted:
 	var roll_done: bool = false
 	var chosen: int = -1                  # -1 corresponds to Python's `None`
 	var rerolls: int = 0
+	var heal_card_used: bool = false      # Only 1 healing action card allowed per round
 
 	func _init(chars: Array = [], deck_cards: Array = []) -> void:
 		characters = []
@@ -114,6 +115,7 @@ class PlayerState extends RefCounted:
 		roll_done = false
 		chosen = -1
 		rerolls = 0
+		heal_card_used = false
 
 	func get_active_char() -> CharacterInstance:
 		if active < 0 or active >= characters.size():
@@ -150,5 +152,6 @@ class PlayerState extends RefCounted:
 		p.roll_done = roll_done
 		p.chosen = chosen
 		p.rerolls = rerolls
+		p.heal_card_used = heal_card_used
 		return p
 

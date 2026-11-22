@@ -12,7 +12,7 @@ const CARD_H: float = 134.0
 const COLS: int = 5
 const ROWS: int = 3
 const ROSTER_PER_PAGE: int = 10
-const TABS: Array[String] = ["All", "Heal", "Buff"]
+const TABS: Array[String] = ["All", "Equipment", "Utility"]
 const COST_FILTER_ORDER: Array[int] = [-1, 0, 1, 2, 3, 4]   # -1 = any
 
 var chars: Array[String] = []
@@ -197,6 +197,8 @@ static func total_cost(cd: CardDataSystem.CardData) -> int:
 
 
 static func requirement(cd: CardDataSystem.CardData) -> String:
+	if not cd.char_name.is_empty():
+		return "Equipment: requires %s" % cd.char_name
 	var role_lbl := CardDataSystem.infer_card_role(cd).capitalize()
 	return "%s Card: usable in any deck" % role_lbl
 

@@ -20,7 +20,7 @@ const REACT_DESC: Dictionary = {
 	"Superconduct": "+1 DMG, 1 Piercing to others (Cryo + Electro)",
 	"Electro-Charged": "+1 DMG, 1 Piercing to others (Hydro + Electro)",
 	"Frozen": "+1 DMG, target Frozen (Cryo + Hydro)",
-	"Swirl": "1 Elemental DMG to other characters (Anemo)",
+	"Swirl": "2 Elemental DMG to other characters (Anemo)",
 	"Crystallize": "+1 DMG, 1 Crystallize Shield (Geo)",
 }
 
@@ -64,6 +64,7 @@ var selected_hand_index: int = -1      # Selected hand card awaiting target clic
 var mulligan_swap_indices: Array[int] = []
 var roll_selected_dice: Array[int] = []
 var pay_pending: Dictionary = {}       # Empty when inactive; otherwise {"action", "cost", "title", "detail", "tune", "card_index", "selected_dice"}
+var card_swap_pending: Dictionary = {} # Empty when inactive; otherwise {"action", "card_idx", "selected_ids", "max_pick"}
 var drag_state: Dictionary = {}        # Empty when inactive; otherwise {"hand_index", "card_name", "pos"}
 
 # Hover / Inspector States
@@ -109,6 +110,16 @@ var _ai_timer: float = 0.72
 var _own_slot_targets: Array[Vector2] = []
 var _foe_slot_targets: Array[Vector2] = []
 var _hand_target_pos: Vector2 = Vector2(460, 840)
+var _hand_tuck_y: float = 0.0
+var _roll_stage_t: float = 0.0
+var _roll_phase_seen_round: int = -1
+var _roll_hover_die: int = -1
+var _end_round_confirm_open: bool = false
+var _end_round_pill_hovered: bool = false
+var _impact_fx: Array[Dictionary] = []         # {"pos": Vector2, "dtype": String, "t": float, "dur": float, "amount": int}
+var _draw_reveal_cards: Array[Dictionary] = [] # {"card_name": String, "t": float, "dur": float, "slot_idx": int, "total": int}
+var _turn_banner_last_actor: int = -1
+var _turn_banner_last_phase: String = ""
 var _slots_initialized: bool = false
 var _lay: Dictionary = {}
 
@@ -365,9 +376,11 @@ func _build_board_components() -> void:
 	_overlay_canvas = Control.new()
 	_overlay_canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_overlay_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay_canvas.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_overlay_canvas.z_index = UIConstants.Z_BANNERS
 	_overlay_canvas.draw.connect(_draw_top_overlays)
 	add_child(_overlay_canvas)
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
 	# 10. Slide-In Detail & Glossary Drawer (T9.1 - T9.6)
 	detail_drawer = DetailDrawer.new()
@@ -382,7 +395,14 @@ func _build_board_components() -> void:
 	add_child(detail_drawer)
 
 	# 11. Settings Modal (T12.3)
+	game_speed = SettingsModal.saved_speed
+	confirm_before_end_round = SettingsModal.saved_confirm_end_round
+	if animation_queue != null:
+		animation_queue.set_speed(0.0 if game_speed >= 8.0 else game_speed)
+	if vfx_pool != null:
+		vfx_pool.set_speed(game_speed)
 	settings_modal = SettingsModal.new()
+	settings_modal.set_menu_mode(false)
 	settings_modal.z_index = UIConstants.Z_MODAL
 	settings_modal.sync_layout(_vp_size())
 	settings_modal.speed_changed.connect(set_animation_speed)
@@ -457,6 +477,7 @@ func start_match_with_decks(
 	mulligan_swap_indices.clear()
 	roll_selected_dice.clear()
 	pay_pending.clear()
+	card_swap_pending.clear()
 	drag_state.clear()
 	_toasts.clear()
 	_floaters.clear()
@@ -467,6 +488,16 @@ func start_match_with_decks(
 	_flying_cards.clear()
 	_hit_flash.clear()
 	_lunges.clear()
+	_impact_fx.clear()
+	_draw_reveal_cards.clear()
+	_hand_tuck_y = 0.0
+	_roll_stage_t = 0.0
+	_roll_phase_seen_round = -1
+	_roll_hover_die = -1
+	_end_round_confirm_open = false
+	_end_round_pill_hovered = false
+	_turn_banner_last_actor = -1
+	_turn_banner_last_phase = ""
 	_slots_initialized = false
 	_pause_open = false
 	_pause_hover_idx = -1
@@ -645,6 +676,7 @@ func resync() -> void:
 
 func set_animation_speed(speed_mult: float) -> void:
 	game_speed = speed_mult
+	SettingsModal.saved_speed = speed_mult
 	if animation_queue != null:
 		animation_queue.set_speed(0.0 if speed_mult >= 8.0 else speed_mult)
 	if vfx_pool != null:
@@ -658,9 +690,38 @@ func skip_animations() -> void:
 	_busy_timer = 0.0
 	_flying_cards.clear()
 	_card_preview.clear()
+	_impact_fx.clear()
+	_draw_reveal_cards.clear()
+	_end_round_confirm_open = false
 	if vfx_pool != null:
 		vfx_pool.clear_all()
 	resync()
+
+
+func _queue_draw_reveal(new_cards: Array[String]) -> void:
+	if new_cards.is_empty() or not is_inside_tree() or intro_active():
+		return
+	var show_n: int = mini(2, new_cards.size())
+	_draw_reveal_cards.clear()
+	for i in range(show_n):
+		_draw_reveal_cards.append({
+			"card_name": new_cards[new_cards.size() - show_n + i],
+			"t": 0.0,
+			"dur": 0.72,
+			"slot_idx": i,
+			"total": show_n,
+		})
+
+
+func _check_draw_reveal(prev_hand: Array[String], prev_phase: String) -> void:
+	if game_state == null or prev_phase == "setup" or not is_inside_tree() or intro_active():
+		return
+	var cur_hand: Array[String] = me().hand
+	if cur_hand.size() > prev_hand.size():
+		var gained: Array[String] = []
+		for i in range(prev_hand.size(), cur_hand.size()):
+			gained.append(cur_hand[i])
+		_queue_draw_reveal(gained)
 
 
 func _on_anim_queue_busy_changed(busy: bool) -> void:
@@ -701,6 +762,9 @@ func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 	## lightweight visual feedback from `events`, and synchronizes the board.
 	if input_controller != null:
 		input_controller.record_action()
+	var prev_hand: Array[String] = me().hand.duplicate() if game_state != null else []
+	var prev_phase: String = game_state.phase if game_state != null else ""
+	_end_round_confirm_open = false
 	var res: Dictionary = lifecycle.submit_action(action)
 	if not bool(res.get("ok", false)):
 		var err_str: String = String(res.get("error", "Illegal action"))
@@ -711,6 +775,7 @@ func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 		return res
 
 	_present_events(res.get("events", []))
+	_check_draw_reveal(prev_hand, prev_phase)
 	if game_state != null and is_inside_tree() and animation_queue != null and game_speed < 8.0:
 		var ev_stream: Array = game_state.consume_game_events() if game_state.has_method("consume_game_events") else []
 		if not ev_stream.is_empty():
@@ -725,6 +790,7 @@ func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 	mulligan_swap_indices.clear()
 	roll_selected_dice.clear()
 	pay_pending.clear()
+	card_swap_pending.clear()
 	drag_state.clear()
 
 	# Hotseat view switching when active human player changes
@@ -756,9 +822,12 @@ func execute_action(action: TCGGameState.ActionData) -> Dictionary:
 func _present_events(events: Array) -> void:
 	if _lay.is_empty():
 		_compute_board_layout()
+	var safe: Rect2 = _lay.get("safe", Rect2(0, 0, 1920, 1080))
 	var cx: float = float(_lay.get("cx", 960.0))
 	var cy: float = float(_lay.get("cy", 540.0))
 	var ribbon_pos := Vector2(cx, cy - 110.0)
+	var own_ribbon_pos := Vector2(safe.position.x + 250.0, cy - 116.0)
+	var foe_ribbon_pos := Vector2(safe.end.x - 320.0, cy - 116.0)
 	var banner_y: float = cy - 16.0
 
 	for ev in events:
@@ -777,10 +846,18 @@ func _present_events(events: Array) -> void:
 				_floaters.append({
 					"text": "-%d" % amt,
 					"pos": pos + Vector2(0, -10),
-					"vel_y": -82.0,
+					"vel_y": -76.0,
 					"col": TCGTheme.elem_color(dtype),
 					"ttl": 1.5,
 					"max_ttl": 1.5,
+					"kind": "damage",
+				})
+				_impact_fx.append({
+					"pos": pos,
+					"dtype": dtype,
+					"t": 0.0,
+					"dur": 0.36,
+					"amount": amt,
 				})
 				if vfx_pool != null:
 					vfx_pool.spawn_floating_number(pos + Vector2(0, -12), "-%d" % amt, dtype, false, 1.15 if amt >= 4 else 1.0)
@@ -825,15 +902,40 @@ func _present_events(events: Array) -> void:
 				_floaters.append({
 					"text": "+%d" % amt,
 					"pos": pos + Vector2(0, -14),
-					"vel_y": -74.0,
+					"vel_y": -68.0,
 					"col": TCGTheme.HEAL,
 					"ttl": 1.4,
 					"max_ttl": 1.4,
+					"kind": "heal",
 				})
 				if vfx_pool != null:
 					vfx_pool.spawn_floating_number(pos + Vector2(0, -16), "+%d" % amt, "Hydro", true)
 				if is_inside_tree() and AudioManager != null:
 					AudioManager.play_sfx("heal")
+			"cleanse":
+				var cp: int = int(ev.get("player", 0))
+				var ci: int = int(ev.get("char", 0))
+				var cl_aura: String = String(ev.get("aura", ""))
+				var cpos := _char_slot_center(cp, ci)
+				var cl_name: String = game_state.players[cp].characters[ci].name if (cp >= 0 and cp < game_state.players.size() and ci >= 0 and ci < game_state.players[cp].characters.size()) else "Character"
+				_impact_fx.append({
+					"pos": cpos,
+					"dtype": "Anemo",
+					"t": 0.0,
+					"dur": 0.48,
+					"amount": 0,
+				})
+				_floaters.append({
+					"text": "CLEANSED %s" % cl_aura.to_upper() if not cl_aura.is_empty() else "CLEANSED",
+					"pos": cpos + Vector2(0, -34),
+					"vel_y": -52.0,
+					"col": TCGTheme.elem_color("Anemo"),
+					"ttl": 1.7,
+					"max_ttl": 1.7,
+					"kind": "cleanse",
+				})
+				show_toast("%s cleansed %s aura!" % [cl_name, cl_aura], TCGTheme.elem_color("Anemo"), 2.2)
+				_busy_timer = maxf(_busy_timer, 1.15)
 			"skill":
 				var sp: int = int(ev.get("player", 0))
 				var sc: int = int(ev.get("char", 0))
@@ -848,18 +950,21 @@ func _present_events(events: Array) -> void:
 				var who: String = _who(sp)
 				var ch_obj := game_state.players[sp].characters[sc]
 				var elem_col: Color = TCGTheme.elem_color(ch_obj.get_defn().element) if ch_obj.get_defn() != null else TCGTheme.GOLD
+				var is_mine: bool = (sp == view_player)
 				_ribbons.append({
 					"title": sk_name,
 					"sub": "%s · %s%s" % [who, ch_obj.name, " · Elemental Burst" if is_burst else ""],
 					"accent": elem_col,
-					"pos": ribbon_pos,
+					"pos": own_ribbon_pos if is_mine else foe_ribbon_pos,
 					"t": 0.0,
-					"dur": 2.4 if is_burst else 1.85,
-					"mine": (sp == view_player),
+					"dur": 1.55 if is_burst else 1.20,
+					"mine": is_mine,
+					"char_name": ch_obj.name,
+					"align_right": not is_mine,
 				})
-				_busy_timer = maxf(_busy_timer, 1.35 if is_burst else 0.90)
+				_busy_timer = maxf(_busy_timer, 0.86 if is_burst else 0.54)
 				if is_burst:
-					_burst_flash_alpha = 0.65
+					_burst_flash_alpha = 0.52
 					if is_inside_tree() and AudioManager != null:
 						AudioManager.play_sfx("burst")
 				elif is_inside_tree() and AudioManager != null:
@@ -870,34 +975,41 @@ func _present_events(events: Array) -> void:
 				var sw_ch := game_state.players[sw_p].characters[sw_c]
 				var who: String = _who(sw_p)
 				var elem_col: Color = TCGTheme.elem_color(sw_ch.get_defn().element) if sw_ch.get_defn() != null else TCGTheme.GOLD
+				var sw_mine: bool = (sw_p == view_player)
 				_ribbons.append({
 					"title": "%s steps forward" % sw_ch.name,
 					"sub": "%s switched active character" % who,
 					"accent": elem_col,
-					"pos": ribbon_pos,
+					"pos": own_ribbon_pos if sw_mine else foe_ribbon_pos,
 					"t": 0.0,
-					"dur": 1.65,
-					"mine": (sw_p == view_player),
+					"dur": 1.10,
+					"mine": sw_mine,
+					"char_name": sw_ch.name,
+					"align_right": not sw_mine,
 				})
 				if is_inside_tree() and AudioManager != null:
 					AudioManager.play_sfx("card_hover")
-				_busy_timer = maxf(_busy_timer, 0.70)
+				_busy_timer = maxf(_busy_timer, 0.42)
 			"card":
+				# Single unified Genshin card-play showcase: Player plays left, AI plays right, dissolves in golden sparks
 				var cname: String = String(ev.get("name", ""))
 				var cplayer: int = int(ev.get("player", 0))
-				var start_p := Vector2(cx, cy + 360.0) if cplayer == view_player else Vector2(cx, 56.0)
-				var dest_p: Vector2 = _lay.get("play_preview_center", Vector2(cx, cy - 84.0))
+				var mine_card: bool = (cplayer == view_player)
+				var start_p := Vector2(cx, safe.end.y - 60.0) if mine_card else Vector2(float(_lay.get("foe_hand_cx", cx + 320.0)), safe.position.y + 44.0)
+				var dest_p := Vector2(safe.position.x + 240.0, cy - 22.0) if mine_card else Vector2(safe.end.x - 260.0, cy - 22.0)
+				_card_preview.clear()
+				_flying_cards.clear()
 				_flying_cards.append({
 					"card_name": cname,
 					"from": start_p,
 					"to": dest_p,
 					"t": 0.0,
-					"dur": 0.85,
+					"dur": 0.86,
+					"mine": mine_card,
 				})
-				_card_preview = {"card_name": cname, "t": 0.0, "dur": 0.95}
 				if is_inside_tree() and AudioManager != null:
 					AudioManager.play_sfx("card_play")
-				_busy_timer = maxf(_busy_timer, 0.65)
+				_busy_timer = maxf(_busy_timer, 0.44)
 			"summon":
 				if is_inside_tree() and AudioManager != null:
 					AudioManager.play_sfx("ui_click")
@@ -919,6 +1031,8 @@ func _present_events(events: Array) -> void:
 					"t": 0.0,
 					"dur": 1.8,
 					"mine": (dp == view_player),
+					"char_name": dch.name,
+					"align_right": (dp != view_player),
 				})
 				_busy_timer = maxf(_busy_timer, 0.95)
 				show_toast("%s was defeated!" % dch.name, TCGTheme.RED, 2.2)
@@ -931,9 +1045,9 @@ func _present_events(events: Array) -> void:
 						"color": TCGTheme.GOLD,
 						"y": banner_y,
 						"t": 0.0,
-						"dur": 1.85,
+						"dur": 1.65,
 					})
-					_busy_timer = maxf(_busy_timer, 0.75)
+					_busy_timer = maxf(_busy_timer, 0.70)
 				elif pname == "end":
 					_banners.append({
 						"title": "End Phase",
@@ -941,11 +1055,12 @@ func _present_events(events: Array) -> void:
 						"color": TCGTheme.GOLD,
 						"y": banner_y,
 						"t": 0.0,
-						"dur": 1.85,
+						"dur": 1.65,
 					})
-					_busy_timer = maxf(_busy_timer, 0.85)
+					_busy_timer = maxf(_busy_timer, 0.80)
 			"round":
 				var rnum: int = int(ev.get("number", 1))
+				_roll_stage_t = 0.0
 				if dice_tray != null:
 					dice_tray.trigger_roll([], 0.78)
 				if is_inside_tree() and AudioManager != null:
@@ -956,9 +1071,9 @@ func _present_events(events: Array) -> void:
 					"color": TCGTheme.GOLD_L,
 					"y": banner_y,
 					"t": 0.0,
-					"dur": 1.9,
+					"dur": 1.75,
 				})
-				_busy_timer = maxf(_busy_timer, 0.85)
+				_busy_timer = maxf(_busy_timer, 0.80)
 			"end_round":
 				var ep: int = int(ev.get("player", 0))
 				var who: String = _who(ep)
@@ -966,12 +1081,14 @@ func _present_events(events: Array) -> void:
 					"title": "%s ended the round" % who,
 					"sub": "",
 					"accent": TCGTheme.DIM,
-					"pos": ribbon_pos,
+					"pos": own_ribbon_pos if ep == view_player else foe_ribbon_pos,
 					"t": 0.0,
-					"dur": 1.4,
+					"dur": 1.25,
 					"mine": (ep == view_player),
+					"char_name": "",
+					"align_right": (ep != view_player),
 				})
-				_busy_timer = maxf(_busy_timer, 0.5)
+				_busy_timer = maxf(_busy_timer, 0.45)
 
 
 func _char_slot_center(p_idx: int, c_idx: int) -> Vector2:
@@ -984,12 +1101,69 @@ func _char_slot_center(p_idx: int, c_idx: int) -> Vector2:
 # ------------------------------------------------------------------------------
 # Payment & Elemental Tuning Modal Workflow (`begin_payment`, `begin_tune`)
 # ------------------------------------------------------------------------------
+func _card_swap_limit(hand_idx: int) -> int:
+	if game_state == null:
+		return 0
+	var p := me()
+	if hand_idx < 0 or hand_idx >= p.hand.size():
+		return 0
+	var cd := CardDataSystem.get_card_def(p.hand[hand_idx])
+	if cd == null:
+		return 0
+	for st in cd.play_steps:
+		if st.op == "swap_cards":
+			return maxi(1, st.amount)
+	return 0
+
+
+func confirm_card_swap() -> Dictionary:
+	if card_swap_pending.is_empty():
+		return {"ok": false, "error": "no card swap pending"}
+	var sel: Array = card_swap_pending.get("selected_ids", []).duplicate()
+	if sel.is_empty():
+		show_toast("Select 1 or 2 cards from your hand to swap (or Cancel)", TCGTheme.GOLD_L)
+		return {"ok": false, "error": "no cards selected"}
+	sel.sort()
+	var card_idx: int = int(card_swap_pending.get("card_idx", -1))
+	var adj: Array[int] = []
+	for raw_i in sel:
+		var idx: int = int(raw_i)
+		if idx == card_idx:
+			continue
+		adj.append(idx - 1 if idx > card_idx else idx)
+	var act: TCGGameState.ActionData = (card_swap_pending["action"] as TCGGameState.ActionData).with_ids(adj)
+	card_swap_pending.clear()
+	return execute_action(act)
+
+
+func cancel_card_swap() -> void:
+	card_swap_pending.clear()
+	selected_hand_index = -1
+	sync_from_state()
+
+
 func begin_payment(
 	action: TCGGameState.ActionData,
 	cost: CardDataSystem.CostData,
 	title: String,
 	detail: String = ""
 ) -> bool:
+	if action.type == "card" and action.ids.is_empty():
+		var swap_max := _card_swap_limit(action.index)
+		if swap_max > 0 and me().hand.size() > 1:
+			var empty_ids: Array[int] = []
+			card_swap_pending = {
+				"action": action,
+				"card_idx": action.index,
+				"selected_ids": empty_ids,
+				"max_pick": mini(swap_max, me().hand.size() - 1),
+			}
+			selected_hand_index = -1
+			_inspected.clear()
+			show_toast("Click up to %d card(s) in your hand to swap, then Confirm" % int(card_swap_pending["max_pick"]), TCGTheme.GOLD_L, 2.5)
+			sync_from_state()
+			return true
+
 	var total_needed: int = cost.n + cost.unaligned
 	if total_needed <= 0:
 		var res := execute_action(action.with_dice([]))
@@ -1107,6 +1281,8 @@ func explain_card_unplayable(cname: String) -> String:
 		return "You must choose an active character first"
 
 	var p := me()
+	if TCGRulesEngine.is_healing_action_card(cd) and p.heal_card_used:
+		return "Only 1 healing action card can be used per round (drag to Dice Tray or right-click to Tune)"
 	var targets := TCGRulesEngine.card_targets(p, cd)
 	if targets.is_empty():
 		if cd.kind == "talent":
@@ -1117,12 +1293,14 @@ func explain_card_unplayable(cname: String) -> String:
 				return "%s is Frozen/Petrified and cannot use Talent" % ch.name
 			return "Not enough Energy on %s for %s" % [ch.name, cd.name]
 		if cd.kind == "weapon":
-			return "No alive character uses a %s" % cd.weapon
+			if not cd.char_name.is_empty():
+				return "%s is defeated — drag to Dice Tray or right-click to Tune into a die" % cd.char_name
+			return "No alive character uses a %s (drag to Dice Tray to Tune)" % cd.weapon
 		if cd.kind == "support" and p.supports.size() >= CardDataSystem.MAX_SUPPORTS:
 			return "Support zone is full (max 4)"
 		return "No valid target for %s" % cname
 
-	return "Not enough matching elemental dice for %s" % cname
+	return "Not enough matching elemental dice for %s (drag to Dice Tray or right-click to Tune)" % cname
 
 
 func select_or_play_hand_card(hand_idx: int, target_char_idx: int = -2) -> Dictionary:
@@ -1147,6 +1325,22 @@ func select_or_play_hand_card(hand_idx: int, target_char_idx: int = -2) -> Dicti
 			mulligan_swap_indices.append(hand_idx)
 		sync_from_state()
 		return {"ok": true, "mulligan_toggled": true}
+
+	if not card_swap_pending.is_empty():
+		var src_idx: int = int(card_swap_pending.get("card_idx", -1))
+		if hand_idx == src_idx:
+			show_toast("Select other cards in your hand to swap", TCGTheme.DIM)
+			return {"ok": false, "error": "cannot swap source card"}
+		var sel_ids: Array[int] = card_swap_pending["selected_ids"]
+		var max_pick: int = int(card_swap_pending.get("max_pick", 2))
+		if sel_ids.has(hand_idx):
+			sel_ids.erase(hand_idx)
+		elif sel_ids.size() < max_pick:
+			sel_ids.append(hand_idx)
+		else:
+			show_toast("You can swap at most %d cards (click one to deselect)" % max_pick, TCGTheme.GOLD_L)
+		sync_from_state()
+		return {"ok": true, "swap_toggled": true}
 
 	# Case 1: Clicked a card in hand (`target_char_idx == -2`)
 	# Click 1 = inspect details (and highlight valid targets); Click 2 on same card = try to play
@@ -1189,7 +1383,12 @@ func select_or_play_hand_card(hand_idx: int, target_char_idx: int = -2) -> Dicti
 				break
 		if untargeted != null:
 			begin_payment(untargeted, cd2.cost, cd2.name, cd2.text)
-			return {"ok": true, "payment_opened": not pay_pending.is_empty()}
+			return {"ok": true, "payment_opened": not pay_pending.is_empty(), "awaiting_swap": not card_swap_pending.is_empty()}
+
+		# Character-exclusive equipment has only 1 valid owner: 2nd click equips directly
+		if cands2.size() == 1 and cd2 != null and not cd2.char_name.is_empty():
+			begin_payment(cands2[0], cd2.cost, cd2.name, cd2.text)
+			return {"ok": true, "payment_opened": not pay_pending.is_empty(), "awaiting_swap": not card_swap_pending.is_empty()}
 
 		show_toast("Select a highlighted character for %s (Esc to cancel)" % cname2, TCGTheme.GOLD_L)
 		return {"ok": true, "awaiting_target": true}
@@ -1219,6 +1418,9 @@ func select_or_play_hand_card(hand_idx: int, target_char_idx: int = -2) -> Dicti
 			if a.target == -1:
 				matched = a
 				break
+	if matched == null and target_char_idx == -1 and cands.size() == 1 and cd != null and not cd.char_name.is_empty():
+		# Allow dropping a character-exclusive equipment card anywhere on the play mat
+		matched = cands[0]
 
 	if matched == null:
 		show_toast("Invalid target for %s" % cname, TCGTheme.RED)
@@ -1226,7 +1428,7 @@ func select_or_play_hand_card(hand_idx: int, target_char_idx: int = -2) -> Dicti
 
 	selected_hand_index = hand_idx
 	begin_payment(matched, cd.cost, cd.name, cd.text)
-	return {"ok": true, "payment_opened": not pay_pending.is_empty()}
+	return {"ok": true, "payment_opened": not pay_pending.is_empty(), "awaiting_swap": not card_swap_pending.is_empty()}
 
 
 # ------------------------------------------------------------------------------
@@ -1446,6 +1648,7 @@ func sync_from_state() -> void:
 
 	var in_mulligan: bool = is_mulligan_stage() and not intro_active()
 	hand_strip.visible = not (intro_active() and game_state.phase != "over")
+	hand_strip.z_index = (UIConstants.Z_BANNERS + 1) if (in_mulligan and not _pause_open and _hotseat_cover < 0) else UIConstants.Z_HAND
 	hand_strip.size = Vector2(float(_lay["hand_w"]), 232.0)
 	hand_strip.custom_minimum_size = hand_strip.size
 	_hand_target_pos = _lay["hand_mull_pos"] if in_mulligan else _lay["hand_normal_pos"]
@@ -1454,21 +1657,49 @@ func sync_from_state() -> void:
 		_slots_initialized = true
 	var deck_r: Rect2 = _lay["own_deck_rect"]
 	hand_strip.set_draw_origin(deck_r.get_center() - hand_strip.position)
+	var swap_marks: Array[int] = mulligan_swap_indices if card_swap_pending.is_empty() else (card_swap_pending["selected_ids"] as Array[int])
+	# Own bottom hand is ALWAYS face-up (just like Genshin TCG); only obscured during local PvP device handoff cover.
 	hand_strip.setup(
 		p_own.hand,
 		playable_cards,
 		selected_hand_index,
-		mulligan_swap_indices,
+		swap_marks,
 		in_mulligan,
-		(not human_flags[view_player] and not reveal_opponent_hand) or _hotseat_cover >= 0,
+		_hotseat_cover >= 0,
 		int(drag_state.get("hand_index", -1)),
-		is_my_turn() and game_state.phase == "action" and not in_mulligan
+		is_my_turn() and game_state.phase == "action" and not in_mulligan and card_swap_pending.is_empty()
 	)
 
 	# 8. Update Battle Log
 	if battle_log != null:
 		battle_log.position = _lay["battle_log_pos"]
 		battle_log.setup(game_state.log)
+
+	# 9. Sync Center Roll Stage entrance & Turn-Handoff Ribbons
+	if _is_center_roll_stage() and _roll_phase_seen_round != game_state.round_number:
+		_roll_phase_seen_round = game_state.round_number
+		_roll_stage_t = 0.0
+	if not is_my_turn() or game_state.phase != "action":
+		_end_round_confirm_open = false
+	if is_inside_tree() and not intro_active() and game_state.phase == "action":
+		if _turn_banner_last_phase == "action" and act_actor >= 0 and act_actor != _turn_banner_last_actor and _banners.is_empty():
+			var cy_b: float = float(_lay.get("cy", 540.0)) - 16.0
+			var my_turn_now: bool = (act_actor == view_player and human_flags[act_actor])
+			var t_title: String = "Your Turn" if my_turn_now else ("%s's Turn…" % _who(act_actor))
+			_banners.append({
+				"title": t_title,
+				"sub": "",
+				"color": TCGTheme.GOLD_L if my_turn_now else TCGTheme.TEXT,
+				"y": cy_b,
+				"t": 0.0,
+				"dur": 1.05,
+			})
+		_turn_banner_last_actor = act_actor
+		_turn_banner_last_phase = game_state.phase
+	else:
+		_turn_banner_last_phase = game_state.phase
+		if game_state.phase != "action":
+			_turn_banner_last_actor = -1
 
 	queue_redraw()
 
@@ -1526,8 +1757,46 @@ func _process(delta: float) -> void:
 				foe_char_slots[i].position = foe_char_slots[i].position.lerp(_foe_slot_targets[i], k_pos)
 			if not own_char_slots[i].position.is_equal_approx(_own_slot_targets[i]):
 				own_char_slots[i].position = own_char_slots[i].position.lerp(_own_slot_targets[i], k_pos)
-	if hand_strip != null and not hand_strip.position.is_equal_approx(_hand_target_pos):
-		hand_strip.position = hand_strip.position.lerp(_hand_target_pos, k_pos)
+	if hand_strip != null:
+		var in_mull_p: bool = is_mulligan_stage() and not intro_active()
+		var near_bottom: bool = (
+			_hover_mouse_pos.y >= _hand_target_pos.y + 22.0
+			and _hover_mouse_pos.x >= _hand_target_pos.x - 24.0
+			and _hover_mouse_pos.x <= _hand_target_pos.x + hand_strip.size.x + 24.0
+		)
+		var hand_engaged: bool = (
+			in_mull_p
+			or not card_swap_pending.is_empty()
+			or selected_hand_index >= 0
+			or not drag_state.is_empty()
+			or hand_strip.is_engaged()
+			or near_bottom
+			or not is_inside_tree()
+		)
+		var target_tuck: float = 0.0 if hand_engaged else 64.0
+		_hand_tuck_y = lerpf(_hand_tuck_y, target_tuck, k_pos)
+		var desired_hand_pos := _hand_target_pos + Vector2(0.0, _hand_tuck_y)
+		if not hand_strip.position.is_equal_approx(desired_hand_pos):
+			hand_strip.position = hand_strip.position.lerp(desired_hand_pos, k_pos)
+
+	# Center Roll Stage tumble timer
+	if _is_center_roll_stage() and _roll_stage_t < 1.2:
+		_roll_stage_t = minf(1.2, _roll_stage_t + delta * game_speed)
+		dirty = true
+
+	# Center End-Phase / Draw Cards reveal showcase
+	for i in range(_draw_reveal_cards.size() - 1, -1, -1):
+		_draw_reveal_cards[i]["t"] = float(_draw_reveal_cards[i]["t"]) + delta * game_speed
+		if float(_draw_reveal_cards[i]["t"]) >= float(_draw_reveal_cards[i]["dur"]):
+			_draw_reveal_cards.remove_at(i)
+		dirty = true
+
+	# Elemental slash/bolt impact VFX
+	for i in range(_impact_fx.size() - 1, -1, -1):
+		_impact_fx[i]["t"] = float(_impact_fx[i]["t"]) + delta * game_speed
+		if float(_impact_fx[i]["t"]) >= float(_impact_fx[i]["dur"]):
+			_impact_fx.remove_at(i)
+		dirty = true
 
 	# Center play card preview TTL (T5.9)
 	if not _card_preview.is_empty():
@@ -1631,9 +1900,12 @@ func _process(delta: float) -> void:
 			_ai_timer -= delta * game_speed
 			if _ai_timer <= 0.0:
 				_ai_timer = 0.72
+				var ai_prev_hand: Array[String] = me().hand.duplicate()
+				var ai_prev_phase: String = game_state.phase
 				var ai_res := lifecycle.step_ai_if_ready()
 				if bool(ai_res.get("ok", false)):
 					_present_events(ai_res.get("events", []))
+					_check_draw_reveal(ai_prev_hand, ai_prev_phase)
 					sync_from_state()
 					dirty = true
 
@@ -1979,44 +2251,100 @@ func _mulligan_confirm_rect() -> Rect2:
 	return _ensure_lay()["mulligan_confirm_rect"]
 
 
+func _card_swap_confirm_rect() -> Rect2:
+	var l := _ensure_lay()
+	var cx: float = float(l["cx"])
+	var safe: Rect2 = l["safe"]
+	return Rect2(cx - 210.0, safe.position.y + 474.0, 210.0, 46.0)
+
+
+func _card_swap_cancel_rect() -> Rect2:
+	var l := _ensure_lay()
+	var cx: float = float(l["cx"])
+	var safe: Rect2 = l["safe"]
+	return Rect2(cx + 16.0, safe.position.y + 474.0, 180.0, 46.0)
+
+
 func _roll_confirm_rect() -> Rect2:
+	if _is_center_roll_stage():
+		var safe: Rect2 = _ensure_lay()["safe"]
+		var cx: float = safe.get_center().x
+		var cy: float = safe.get_center().y
+		return Rect2(cx - 128.0, cy + 168.0, 256.0, 50.0)
 	return _ensure_lay()["roll_confirm_rect"]
 
 
-func _payment_panel_rects() -> Array[Rect2]:
+func _is_center_roll_stage() -> bool:
+	return (
+		game_state != null
+		and game_state.phase == "roll"
+		and is_my_turn()
+		and not intro_active()
+		and _hotseat_cover < 0
+		and pay_pending.is_empty()
+	)
+
+
+func _center_roll_die_rect(idx: int, total: int) -> Rect2:
 	var safe: Rect2 = _ensure_lay()["safe"]
-	var total_w: float = minf(1160.0, safe.size.x - 64.0)
-	var h: float = minf(540.0, safe.size.y - 140.0)
-	var x0: float = safe.get_center().x - total_w * 0.5
-	var y0: float = safe.get_center().y - h * 0.5
-	var lw: float = clampf(total_w * 0.39, 360.0, 450.0)
-	var gap: float = 30.0
-	var rw: float = total_w - lw - gap
-	return [
-		Rect2(x0, y0, lw, h),
-		Rect2(x0 + lw + gap, y0, rw, h),
-	]
+	var cx: float = safe.get_center().x
+	var cy: float = safe.get_center().y - 6.0
+	var count: int = maxi(1, total)
+	var rows: int = 1 if count <= 4 else 2
+	var top_cols: int = count if rows == 1 else ceili(float(count) * 0.5)
+	var bot_cols: int = count - top_cols
+	var die_sz: float = 88.0 if top_cols <= 4 else clampf(760.0 / float(top_cols) - 20.0, 58.0, 82.0)
+	var gap_x: float = 42.0 if top_cols <= 4 else 20.0
+	var gap_y: float = 30.0
+	var row: int = 0 if idx < top_cols else 1
+	var col: int = idx if row == 0 else (idx - top_cols)
+	var cols_in_row: int = top_cols if row == 0 else maxi(1, bot_cols)
+	var row_w: float = float(cols_in_row) * die_sz + float(maxi(0, cols_in_row - 1)) * gap_x
+	var x0: float = cx - row_w * 0.5 + float(col) * (die_sz + gap_x)
+	var y0: float = (cy - die_sz * 0.5) if rows == 1 else (cy - die_sz - gap_y * 0.5 + float(row) * (die_sz + gap_y))
+	return Rect2(x0, y0, die_sz, die_sz)
+
+
+func _end_round_confirm_pill_rect() -> Rect2:
+	var er := _end_phase_rect()
+	return Rect2(er.end.x + 14.0, er.get_center().y - 24.0, 206.0, 48.0)
+
+
+func _payment_panel_rects() -> Array[Rect2]:
+	## Genshin inline payment layout: compact left detail box + warm right-side translucent dice drawer.
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var lw: float = clampf(safe.size.x * 0.17, 260.0, 316.0)
+	var left_r := Rect2(safe.position.x + 18.0, safe.position.y + 132.0, lw, 286.0)
+	var rw: float = 258.0
+	var right_r := Rect2(safe.end.x - rw - 14.0, safe.position.y + 72.0, rw, safe.size.y - 160.0)
+	return [left_r, right_r]
 
 
 func _pay_die_rect(idx: int) -> Rect2:
 	var right: Rect2 = _payment_panel_rects()[1]
+	var n_dice: int = maxi(1, me().dice.size() if game_state != null else 8)
+	var rows: int = maxi(4, ceili(float(n_dice) * 0.5))
 	var col: int = idx % 2
 	var row: int = idx / 2
-	var col_w: float = (right.size.x - 52.0) * 0.5
-	var cx: float = right.position.x + 26.0 + col_w * (0.5 + float(col))
-	var cy: float = right.position.y + 126.0 + float(row) * 80.0
-	return Rect2(cx - 60.0, cy - 35.0, 120.0, 70.0)
+	var col_w: float = (right.size.x - 32.0) * 0.5
+	var avail_h: float = maxf(240.0, right.size.y - 108.0)
+	var row_step: float = clampf(avail_h / float(rows), 58.0, 96.0)
+	var die_h: float = minf(76.0, row_step - 10.0)
+	var die_w: float = minf(98.0, col_w - 10.0)
+	var cx: float = right.position.x + 16.0 + col_w * (0.5 + float(col))
+	var cy: float = right.position.y + 82.0 + row_step * (0.5 + float(row))
+	return Rect2(cx - die_w * 0.5, cy - die_h * 0.5, die_w, die_h)
 
 
 func _pay_cancel_rect() -> Rect2:
-	var right: Rect2 = _payment_panel_rects()[1]
-	return Rect2(right.position.x + 28.0, right.end.y - 74.0, (right.size.x - 76.0) * 0.5, 54.0)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	return Rect2(safe.end.x - 58.0, safe.position.y + 8.0, 48.0, 48.0)
 
 
 func _pay_confirm_rect() -> Rect2:
-	var right: Rect2 = _payment_panel_rects()[1]
-	var bw: float = (right.size.x - 76.0) * 0.5
-	return Rect2(right.position.x + 48.0 + bw, right.end.y - 74.0, bw, 54.0)
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var cx: float = safe.get_center().x
+	return Rect2(cx - 126.0, safe.end.y - 126.0, 252.0, 50.0)
 
 
 func _card_detail_btn_rect() -> Rect2:
@@ -2058,8 +2386,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			elif not drag_state.is_empty():
 				drag_state.clear()
 				sync_from_state()
+			elif not card_swap_pending.is_empty():
+				cancel_card_swap()
 			elif not pay_pending.is_empty():
 				cancel_payment_modal()
+			elif _end_round_confirm_open:
+				_end_round_confirm_open = false
+				queue_redraw()
 			elif selected_hand_index >= 0 or not _inspected.is_empty():
 				selected_hand_index = -1
 				_inspected.clear()
@@ -2073,8 +2406,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_ENTER, KEY_KP_ENTER:
 			if _pause_open or (settings_modal != null and settings_modal.visible):
 				return
-			if not pay_pending.is_empty():
+			if not card_swap_pending.is_empty():
+				confirm_card_swap()
+			elif not pay_pending.is_empty():
 				confirm_payment_modal()
+			elif _end_round_confirm_open and is_my_turn() and game_state != null and game_state.phase == "action" and game_state.pending.is_empty():
+				_end_round_confirm_open = false
+				execute_action(TCGGameState.ActionData.new("end_round", view_player))
 			elif is_mulligan_stage():
 				_confirm_mulligan()
 			elif is_my_turn() and game_state != null and game_state.phase == "roll":
@@ -2084,7 +2422,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				skip_animations()
 		KEY_E:
 			if not _pause_open and is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty() and pay_pending.is_empty():
-				execute_action(TCGGameState.ActionData.new("end_round", view_player))
+				if _end_round_confirm_open:
+					_end_round_confirm_open = false
+					execute_action(TCGGameState.ActionData.new("end_round", view_player))
+				else:
+					_end_round_confirm_open = true
+					show_toast("Click End Round or press [E] again to confirm", TCGTheme.GOLD_L, 2.0)
+					queue_redraw()
 		KEY_T:
 			if not _pause_open and is_my_turn() and game_state.phase == "action" and selected_hand_index >= 0 and pay_pending.is_empty():
 				begin_tune(selected_hand_index)
@@ -2165,8 +2509,18 @@ func _input(event: InputEvent) -> void:
 		var prev_pa := _pause_hovered
 		var prev_sk := _skip_hovered
 		var prev_ib := _inspect_btn_hovered
+		var prev_rh := _roll_hover_die
+		var prev_erp := _end_round_pill_hovered
 		_pause_hovered = _pause_btn_rect().has_point(pos)
 		_skip_hovered = (animation_queue != null and animation_queue.is_busy() and _skip_btn_rect().has_point(pos))
+		_end_round_pill_hovered = _end_round_confirm_open and _end_round_confirm_pill_rect().has_point(pos)
+		_roll_hover_die = -1
+		if _is_center_roll_stage():
+			var n_rd := me().dice.size()
+			for i in range(n_rd):
+				if _center_roll_die_rect(i, n_rd).has_point(pos):
+					_roll_hover_die = i
+					break
 		_inspect_btn_hovered = (
 			selected_hand_index >= 0
 			and pay_pending.is_empty()
@@ -2205,7 +2559,7 @@ func _input(event: InputEvent) -> void:
 					break
 			if prev_pb != _pay_btn_hovered or prev_pd != _pay_die_hovered:
 				queue_redraw()
-		if prev_ab != _action_btn_hovered or prev_pi != _pause_hover_idx or prev_oi != _over_hover_idx or prev_pa != _pause_hovered or prev_sk != _skip_hovered or prev_ib != _inspect_btn_hovered:
+		if prev_ab != _action_btn_hovered or prev_pi != _pause_hover_idx or prev_oi != _over_hover_idx or prev_pa != _pause_hovered or prev_sk != _skip_hovered or prev_ib != _inspect_btn_hovered or prev_rh != _roll_hover_die or prev_erp != _end_round_pill_hovered:
 			queue_redraw()
 		return
 
@@ -2284,14 +2638,61 @@ func _input(event: InputEvent) -> void:
 				vp.set_input_as_handled()
 			return
 
+		if not card_swap_pending.is_empty():
+			if _card_swap_confirm_rect().has_point(pos):
+				confirm_card_swap()
+				if vp != null:
+					vp.set_input_as_handled()
+				return
+			if _card_swap_cancel_rect().has_point(pos):
+				cancel_card_swap()
+				if vp != null:
+					vp.set_input_as_handled()
+				return
+
 		if is_mulligan_stage() and _mulligan_confirm_rect().has_point(pos):
 			_confirm_mulligan()
 			if vp != null:
 				vp.set_input_as_handled()
 			return
 
-		if is_my_turn() and game_state != null and game_state.phase == "roll" and _roll_confirm_rect().has_point(pos):
-			_confirm_roll_phase()
+		if _is_center_roll_stage():
+			if _roll_confirm_rect().has_point(pos):
+				_confirm_roll_phase()
+				if vp != null:
+					vp.set_input_as_handled()
+				return
+			var n_rd := me().dice.size()
+			for i in range(n_rd):
+				if _center_roll_die_rect(i, n_rd).has_point(pos):
+					_on_tray_die_clicked(i)
+					if vp != null:
+						vp.set_input_as_handled()
+					return
+			# Keep clicks on the dimmed center roll stage from leaking to character slots behind it
+			if vp != null:
+				vp.set_input_as_handled()
+			return
+
+		if _end_round_confirm_open:
+			if _end_round_confirm_pill_rect().has_point(pos) or _end_phase_rect().has_point(pos):
+				_end_round_confirm_open = false
+				if is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty():
+					execute_action(TCGGameState.ActionData.new("end_round", view_player))
+				if vp != null:
+					vp.set_input_as_handled()
+				return
+			_end_round_confirm_open = false
+			queue_redraw()
+		elif _end_phase_rect().has_point(pos):
+			if is_my_turn() and game_state != null and game_state.phase == "action" and game_state.pending.is_empty():
+				_end_round_confirm_open = true
+				if is_inside_tree() and AudioManager != null:
+					AudioManager.play_sfx("ui_click")
+				show_toast("Click End Round again to confirm", TCGTheme.GOLD_L, 2.0)
+				queue_redraw()
+			else:
+				show_toast("You can only End Round on your turn in Action Phase", TCGTheme.RED)
 			if vp != null:
 				vp.set_input_as_handled()
 			return
@@ -2358,6 +2759,9 @@ func _gui_input(event: InputEvent) -> void:
 				sync_from_state()
 			elif not pay_pending.is_empty():
 				cancel_payment_modal()
+			elif _end_round_confirm_open:
+				_end_round_confirm_open = false
+				queue_redraw()
 			elif selected_hand_index >= 0 or not _inspected.is_empty():
 				selected_hand_index = -1
 				_inspected.clear()
@@ -2423,10 +2827,18 @@ func _gui_input(event: InputEvent) -> void:
 				_confirm_roll_phase()
 				return
 
-			# 5. End Round Hourglass Button
+			# 5. End Round Hourglass Button (2-click confirmation: 1st click arms, 2nd click confirms)
 			if _end_phase_rect().has_point(event.position):
 				if is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty():
-					execute_action(TCGGameState.ActionData.new("end_round", view_player))
+					if _end_round_confirm_open:
+						_end_round_confirm_open = false
+						execute_action(TCGGameState.ActionData.new("end_round", view_player))
+					else:
+						_end_round_confirm_open = true
+						if is_inside_tree() and AudioManager != null:
+							AudioManager.play_sfx("ui_click")
+						show_toast("Click End Round again to confirm", TCGTheme.GOLD_L, 2.0)
+						queue_redraw()
 				else:
 					show_toast("You can only End Round on your turn in Action Phase", TCGTheme.RED)
 				return
@@ -2566,20 +2978,21 @@ func _draw() -> void:
 	var p_own: TCGPlayerSystem.PlayerState = game_state.players[view_player]
 	var p_foe: TCGPlayerSystem.PlayerState = game_state.players[1 - view_player]
 
-	# Highlight mat border if dragging an untargeted card
-	var active_card_idx: int = int(drag_state.get("hand_index", selected_hand_index))
-	if active_card_idx >= 0 and active_card_idx < p_own.hand.size() and game_state.phase == "action":
-		for a in get_card_actions_for_hand_index(active_card_idx):
-			if a.target == -1:
-				TCGTheme.draw_rounded_box(
-					self,
-					Rect2(safe.position.x + 190.0, safe.position.y + 64.0, safe.size.x - 310.0, safe.size.y - 280.0),
-					Color(0, 0, 0, 0),
-					TCGTheme.GOLD_L,
-					14,
-					3
-				)
-				break
+	# Subtle golden drop-zone halo ONLY while actively dragging an untargeted card
+	if not drag_state.is_empty() and game_state.phase == "action":
+		var drag_card_idx: int = int(drag_state.get("hand_index", -1))
+		if drag_card_idx >= 0 and drag_card_idx < p_own.hand.size():
+			for a in get_card_actions_for_hand_index(drag_card_idx):
+				if a.target == -1:
+					TCGTheme.draw_rounded_box(
+						self,
+						Rect2(safe.position.x + 190.0, safe.position.y + 64.0, safe.size.x - 310.0, safe.size.y - 280.0),
+						Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.04),
+						Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.65),
+						16,
+						2.2
+					)
+					break
 
 	# 2. Deck Card-Back Piles (left side) + Card Counts
 	_draw_deck_pile(l["foe_deck_rect"], p_foe.deck.size(), "")
@@ -2619,10 +3032,14 @@ func _draw_top_overlays() -> void:
 		var ring_r: float = (1.0 - b_norm) * 520.0 + 70.0
 		c.draw_arc(Vector2(w * 0.5, h * 0.5), ring_r, 0.0, TAU, 48, Color(1.0, 0.88, 0.48, b_norm * 0.65), 4.0)
 
-	# 8. Phase-Specific Prompts (Setup Mulligan, Choose Active Character, Roll Phase)
+	# 8. Phase-Specific Prompts (Setup Mulligan, Choose Active Character, Center Roll Stage)
 	_draw_phase_prompts(c, w, h)
 
-	# 9. Flying Card Animations, Center Preview, Targeting Arrow & Damage/Reaction Floaters
+	# 8b. Genshin Inline End-Round Pill & "I'm ending my Round." Speech Bubble
+	if pay_pending.is_empty() and not _pause_open and _hotseat_cover < 0 and not intro_active() and game_state.phase == "action":
+		_draw_end_round_overlay(c)
+
+	# 9. Flying Card Animations, Draw Reveal, Elemental Impact FX, Targeting Arrow & Damage/Reaction Floaters
 	_draw_fx_layer(c)
 
 	# 10. Dragged Card Follower
@@ -2658,14 +3075,21 @@ func _draw_top_overlays() -> void:
 
 
 func _draw_deck_pile(r: Rect2, count: int, label: String) -> void:
+	if count > 4:
+		TCGArt.draw_card_back(self, Rect2(r.position.x + 5, r.position.y + 5, r.size.x, r.size.y))
 	if count > 1:
-		TCGArt.draw_card_back(self, Rect2(r.position.x + 3, r.position.y + 3, r.size.x, r.size.y))
-	TCGArt.draw_card_back(self, r)
+		TCGArt.draw_card_back(self, Rect2(r.position.x + 2.5, r.position.y + 2.5, r.size.x, r.size.y))
+	if count > 0:
+		TCGArt.draw_card_back(self, r)
+	else:
+		TCGTheme.draw_rounded_box(self, r, Color(0.05, 0.08, 0.13, 0.55), TCGTheme.GOLD_D, 8, 1)
 	var badge_c := Vector2(r.end.x - 4, r.end.y - 6)
-	draw_circle(badge_c, 16.0, TCGTheme.PANEL2)
-	draw_arc(badge_c, 16.0, 0.0, TAU, 20, TCGTheme.GOLD_L, 2.0)
+	draw_circle(badge_c + Vector2(0, 2), 16.0, Color(0, 0, 0, 0.45))
+	draw_circle(badge_c, 16.0, Color(0.07, 0.11, 0.17, 0.96))
+	draw_arc(badge_c, 16.0, 0.0, TAU, 24, TCGTheme.GOLD_L, 2.0)
 	TCGTheme.draw_text_centered(self, str(count), badge_c, 15, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(self, label, Vector2(r.get_center().x, r.end.y + 15.0), 13, TCGTheme.DIM, true, true)
+	if not label.is_empty():
+		TCGTheme.draw_text_centered(self, label, Vector2(r.get_center().x, r.end.y + 15.0), 13, TCGTheme.DIM, true, true)
 
 
 func _draw_opponent_hand_fan(foe_hand: Array[String]) -> void:
@@ -2689,11 +3113,11 @@ func _draw_opponent_hand_fan(foe_hand: Array[String]) -> void:
 
 func _draw_top_phase_banner() -> void:
 	var banner: Rect2 = _ensure_lay()["top_banner"]
-	TCGTheme.draw_gold_frame(self, banner, Color(0.07, 0.12, 0.19, 0.94), 12, false)
+	TCGTheme.draw_gold_frame(self, banner, Color(0.05, 0.08, 0.14, 0.84), 14, false)
 
 	var phase_str: String = "MATCH OVER" if game_state.phase == "over" else (game_state.phase.to_upper() + " PHASE")
 	var round_txt := "ROUND %d  ·  %s" % [game_state.round_number, phase_str]
-	TCGTheme.draw_text_centered(self, round_txt, banner.get_center(), 19, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(self, round_txt, banner.get_center(), 18, TCGTheme.GOLD_L, true, true)
 
 
 func _draw_combat_status_ribbon(_side: int, center: Vector2, statuses: Array) -> void:
@@ -2718,27 +3142,34 @@ func _draw_end_phase_button() -> void:
 	var p_own := game_state.players[view_player]
 	var p_foe := game_state.players[1 - view_player]
 	var can_act: bool = (is_my_turn() and game_state.phase == "action" and game_state.pending.is_empty())
+	var armed: bool = (_end_round_confirm_open and can_act)
 	var rad: float = r.size.x * 0.5
 	var pulse := 0.5 + 0.5 * sin(_clock * 4.5)
 
-	# T2.4 "FIRST NEXT ROUND" slide-out tag above End Round when player declared first
+	# Genshin-style Dice Count badges directly above (Opponent) and below (Player) the End Round medallion
+	_draw_end_round_dice_counter(Vector2(c.x, r.position.y - 30.0), p_foe.dice.size(), true)
+	_draw_end_round_dice_counter(Vector2(c.x, r.end.y + 30.0), p_own.dice.size(), false)
+
+	# T2.4 "1ST NEXT ROUND" tag cleanly above the opponent dice badge when player declared first
 	if p_own.ended and not p_foe.ended:
-		var tag_r := Rect2(r.position.x - 4.0, r.position.y - 30.0, r.size.x + 44.0, 24.0)
+		var tag_r := Rect2(r.position.x - 4.0, r.position.y - 78.0, r.size.x + 36.0, 24.0)
 		TCGTheme.draw_rounded_box(self, tag_r, Color("#183652"), TCGTheme.TEAL, 12, 1.5)
 		TCGTheme.draw_text_centered(self, "1ST NEXT ROUND", tag_r.get_center(), 12, TCGTheme.GOLD_L, true, false)
 
-	var fill := Color8(36, 58, 82) if can_act else Color8(24, 32, 44)
-	if _end_phase_hovered and can_act:
+	var fill := Color8(92, 68, 28) if armed else (Color8(36, 58, 82) if can_act else Color8(24, 32, 44))
+	if _end_phase_hovered and can_act and not armed:
 		fill = Color8(52, 82, 112)
-	var border := TCGTheme.GOLD_L if (_end_phase_hovered or can_act) else TCGTheme.GOLD_D
+	elif _end_phase_hovered and armed:
+		fill = Color8(116, 86, 36)
+	var border := TCGTheme.GOLD_L if (armed or _end_phase_hovered or can_act) else TCGTheme.GOLD_D
 
 	if can_act:
-		draw_arc(c, rad + 5.0 + pulse * 2.5, 0.0, TAU, 36, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.25 + 0.25 * pulse), 2.5)
+		draw_arc(c, rad + 5.0 + pulse * 2.5, 0.0, TAU, 36, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, (0.50 if armed else 0.25) + 0.25 * pulse), 3.0 if armed else 2.5)
 
 	draw_circle(c + Vector2(0, 3), rad, Color(0, 0, 0, 0.45))
 	draw_circle(c, rad, fill)
-	draw_arc(c, rad, 0.0, TAU, 36, border, 3.0)
-	draw_arc(c, rad - 5.0, 0.0, TAU, 30, TCGTheme.GOLD_D, 1.0)
+	draw_arc(c, rad, 0.0, TAU, 36, border, 3.2 if armed else 3.0)
+	draw_arc(c, rad - 5.0, 0.0, TAU, 30, TCGTheme.GOLD_L if armed else TCGTheme.GOLD_D, 1.2)
 
 	# T11.5 Circular Turn Timer Ring around End Round medallion
 	if is_my_turn() and game_state.phase in ["action", "roll"]:
@@ -2756,11 +3187,34 @@ func _draw_end_phase_button() -> void:
 		Vector2(c.x + 12, c.y + 2),
 		Vector2(c.x - 12, c.y + 2),
 	])
-	draw_colored_polygon(hg_pts_top, TCGTheme.GOLD_L if can_act else TCGTheme.DIM)
-	draw_colored_polygon(hg_pts_bot, TCGTheme.GOLD if can_act else TCGTheme.DIM)
+	draw_colored_polygon(hg_pts_top, Color8(255, 240, 190) if armed else (TCGTheme.GOLD_L if can_act else TCGTheme.DIM))
+	draw_colored_polygon(hg_pts_bot, TCGTheme.GOLD_L if armed else (TCGTheme.GOLD if can_act else TCGTheme.DIM))
 
-	TCGTheme.draw_text_centered(self, "END", Vector2(c.x, c.y + 15.0), 15, TCGTheme.GOLD_L if can_act else TCGTheme.DIM, true, true)
-	TCGTheme.draw_text_centered(self, "ROUND", Vector2(c.x, c.y + 32.0), 13, TCGTheme.TEXT if can_act else TCGTheme.DIM, true, true)
+	if armed:
+		TCGTheme.draw_text_centered(self, "CONFIRM", Vector2(c.x, c.y + 15.0), 14, Color8(255, 245, 210), true, true)
+		TCGTheme.draw_text_centered(self, "END ROUND", Vector2(c.x, c.y + 32.0), 11, TCGTheme.GOLD_L, true, true)
+	else:
+		TCGTheme.draw_text_centered(self, "END", Vector2(c.x, c.y + 15.0), 15, TCGTheme.GOLD_L if can_act else TCGTheme.DIM, true, true)
+		TCGTheme.draw_text_centered(self, "ROUND", Vector2(c.x, c.y + 32.0), 13, TCGTheme.TEXT if can_act else TCGTheme.DIM, true, true)
+
+
+func _draw_end_round_dice_counter(center: Vector2, count: int, is_opponent: bool) -> void:
+	var w: float = 82.0
+	var h: float = 30.0
+	var pr := Rect2(center.x - w * 0.5, center.y - h * 0.5, w, h)
+	var border_col := Color8(216, 108, 102) if is_opponent else TCGTheme.TEAL
+	var bg_col := Color(0.14, 0.07, 0.09, 0.90) if is_opponent else Color(0.06, 0.13, 0.19, 0.90)
+	TCGTheme.draw_rounded_box(self, pr, bg_col, border_col, 14, 1.8, Vector2(0, 2), 75)
+	# Subtle directional chevron pointing up (Opponent) or down (Player)
+	var dir_y: float = -1.0 if is_opponent else 1.0
+	var tip_y: float = (pr.position.y - 4.0) if is_opponent else (pr.end.y + 4.0)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(center.x, tip_y),
+		Vector2(center.x - 5.0, tip_y - dir_y * 5.0),
+		Vector2(center.x + 5.0, tip_y - dir_y * 5.0),
+	]), border_col)
+	TCGArt.draw_elem_symbol(self, "Omni", Vector2(pr.position.x + 20.0, center.y), 9.5, Color(0, 0, 0, 0), false)
+	TCGTheme.draw_text_centered(self, str(count), Vector2(pr.position.x + 52.0, center.y), 17, TCGTheme.GOLD_L if count > 0 else TCGTheme.DIM, true, true)
 
 
 func _draw_skip_button() -> void:
@@ -2784,7 +3238,34 @@ func _draw_pause_button() -> void:
 		draw_line(p1, p2, border, 2.2)
 
 
-func _draw_phase_prompts(c: CanvasItem, _w: float, _h: float) -> void:
+func _draw_end_round_overlay(c: CanvasItem) -> void:
+	var l := _ensure_lay()
+	var p_own := game_state.players[view_player]
+	var p_foe := game_state.players[1 - view_player]
+
+	# Genshin inline "End Round" ivory pill expanding cleanly from the left hourglass
+	if _end_round_confirm_open and is_my_turn() and game_state.pending.is_empty():
+		var pr := _end_round_confirm_pill_rect()
+		if not p_foe.ended:
+			var tag_r := Rect2(pr.position.x + 6.0, pr.position.y - 26.0, 194.0, 22.0)
+			TCGTheme.draw_rounded_box(c, tag_r, Color(0.08, 0.21, 0.30, 0.94), TCGTheme.TEAL, 11, 1.4)
+			TCGTheme.draw_text_centered(c, "Go First in Next Round", tag_r.get_center(), 12, TCGTheme.GOLD_L, true, false)
+		TCGTheme.draw_genshin_pill(c, pr, "End Round", _end_round_pill_hovered, false, "confirm")
+
+	# Subtle Genshin "I'm ending my Round." speech bubble beside whichever player ended first
+	if p_foe.ended and not p_own.ended:
+		var fpos: Vector2 = l["foe_hud_pos"]
+		var br := Rect2(fpos.x + 300.0, fpos.y + 12.0, 206.0, 34.0)
+		TCGTheme.draw_rounded_box(c, br, Color(0.95, 0.92, 0.85, 0.94), TCGTheme.GOLD, 16, 1.5, Vector2(0, 2), 60)
+		TCGTheme.draw_text_centered(c, "I'm ending my Round.", br.get_center(), 13, Color8(48, 40, 32), true, false)
+	elif p_own.ended and not p_foe.ended:
+		var opos: Vector2 = l["own_hud_pos"]
+		var br := Rect2(opos.x + 12.0, opos.y - 42.0, 206.0, 34.0)
+		TCGTheme.draw_rounded_box(c, br, Color(0.95, 0.92, 0.85, 0.94), TCGTheme.GOLD, 16, 1.5, Vector2(0, 2), 60)
+		TCGTheme.draw_text_centered(c, "I'm ending my Round.", br.get_center(), 13, Color8(48, 40, 32), true, false)
+
+
+func _draw_phase_prompts(c: CanvasItem, w: float, h: float) -> void:
 	if intro_active():
 		return
 	var l := _ensure_lay()
@@ -2792,67 +3273,135 @@ func _draw_phase_prompts(c: CanvasItem, _w: float, _h: float) -> void:
 	var cx: float = float(l["cx"])
 	var p := me()
 
-	# 1. Mulligan overlay banner & confirm button
+	# 1. Genshin Starting Hand Mulligan (dimmed board + crisp header + ivory Confirm pill)
 	if is_mulligan_stage():
-		var header_box := Rect2(cx - 280.0, safe.position.y + 146.0, 560.0, 88.0)
-		TCGTheme.draw_gold_frame(c, header_box, Color(0.05, 0.09, 0.15, 0.95), 12, true)
-		TCGTheme.draw_text_centered(c, "STARTING HAND MULLIGAN", Vector2(cx, header_box.position.y + 28.0), 25, TCGTheme.GOLD_L, true, true)
-		TCGTheme.draw_text_centered(c, "Click cards to mark SWAP, then confirm", Vector2(cx, header_box.position.y + 62.0), 16, TCGTheme.DIM, false, true)
+		c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.04, 0.07, 0.60))
+		var hdr_y: float = safe.position.y + 174.0
+		TCGTheme.draw_text_centered(c, "Starting Hand", Vector2(cx, hdr_y), 32, TCGTheme.GOLD_L, true, true)
+		var line_w: float = 320.0
+		c.draw_line(Vector2(cx - line_w * 0.5, hdr_y + 24.0), Vector2(cx + line_w * 0.5, hdr_y + 24.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.65), 1.4)
 		var n_sel: int = mulligan_swap_indices.size()
-		TCGTheme.draw_plaque(
-			c,
-			_mulligan_confirm_rect(),
-			"Confirm  ·  %d selected" % n_sel,
-			TCGTheme.GOLD,
-			_action_btn_hovered
-		)
+		var sub_txt := "Select card(s) to switch" if n_sel == 0 else ("%d card(s) marked to switch" % n_sel)
+		TCGTheme.draw_text_centered(c, sub_txt, Vector2(cx, hdr_y + 44.0), 16, TCGTheme.TEXT, false, true)
+		var lbl := "Confirm" if n_sel == 0 else ("Switch %d  ·  Confirm" % n_sel)
+		TCGTheme.draw_genshin_pill(c, _mulligan_confirm_rect(), lbl, _action_btn_hovered, false, "confirm")
 		return
 
-	# 2. Choose Active Character ribbon
+	# 2. Choose Active Character ribbon (Genshin sleek tapered strip)
 	var center_band_y: float = safe.position.y + 414.0
 	if not game_state.pending.is_empty() or (game_state.phase == "setup" and p.mull_done and is_my_turn()):
-		var band := Rect2(cx - 390.0, center_band_y, 780.0, 50.0)
-		TCGTheme.draw_gold_frame(c, band, Color(0.18, 0.13, 0.10, 0.94), 12, true)
-		var msg := "Choose your active character (click one of your characters)" if is_my_turn() else ("%s is choosing an active character…" % _who(actor()))
-		TCGTheme.draw_text_centered(c, msg, band.get_center(), 20, TCGTheme.GOLD_L, true, true)
+		var msg := "Select Starting Active Character" if game_state.phase == "setup" else "Choose your next active character"
+		if not is_my_turn():
+			msg = "%s is choosing an active character…" % _who(actor())
+		TCGTheme.draw_phase_announcement(c, msg, "Click one of your characters below" if is_my_turn() else "", TCGTheme.GOLD_L, center_band_y + 24.0, 0.96)
 		return
 
 	if game_state.phase == "setup" and not is_my_turn() and actor() >= 0:
-		var band := Rect2(cx - 320.0, center_band_y, 640.0, 46.0)
-		TCGTheme.draw_rounded_box(c, band, Color(0.08, 0.13, 0.20, 0.90), TCGTheme.GOLD_D, 10, 1)
-		TCGTheme.draw_text_centered(c, "%s is preparing opening setup…" % _who(actor()), band.get_center(), 17, TCGTheme.GOLD_L, true, true)
+		TCGTheme.draw_phase_announcement(c, "%s is preparing…" % _who(actor()), "", TCGTheme.GOLD_L, center_band_y + 24.0, 0.90)
 		return
 
-	# 3. Roll Phase reroll prompt
-	if is_my_turn() and game_state.phase == "roll":
-		var n_reroll: int = roll_selected_dice.size()
-		var lbl := "Confirm Roll" if (n_reroll == 0 or p.rerolls <= 0) else ("Reroll %d + Go" % n_reroll)
-		var rcr := _roll_confirm_rect()
-		TCGTheme.draw_plaque(c, rcr, lbl, TCGTheme.GREEN, _action_btn_hovered, false, true)
-		TCGTheme.draw_text_centered(
-			c,
-			"Rerolls left: %d (click dice)" % p.rerolls,
-			Vector2(rcr.get_center().x, rcr.end.y + 16.0),
-			14,
-			TCGTheme.GOLD_L,
-			true,
-			true
-		)
+	# 3. Full-Table Genshin Center Roll & Reroll Stage
+	if _is_center_roll_stage():
+		_draw_center_roll_stage(c, w, h)
+		return
 
-	# 4. Selected hand card target instruction banner
+	# 3b. Interactive Swap Cards selection prompt
+	if not card_swap_pending.is_empty():
+		var sel_n: int = (card_swap_pending.get("selected_ids", []) as Array).size()
+		var max_n: int = int(card_swap_pending.get("max_pick", 2))
+		var band := Rect2(cx - 320.0, center_band_y - 26.0, 640.0, 68.0)
+		TCGTheme.draw_gold_frame(c, band, Color(0.05, 0.09, 0.15, 0.95), 14, true)
+		TCGTheme.draw_text_centered(c, "Swap Cards (%d/%d Selected)" % [sel_n, max_n], Vector2(cx, band.position.y + 22.0), 19, TCGTheme.GOLD_L, true, true)
+		TCGTheme.draw_text_centered(c, "Click up to %d card(s) in your hand to switch" % max_n, Vector2(cx, band.position.y + 48.0), 14, TCGTheme.DIM, false, true)
+		TCGTheme.draw_genshin_pill(c, _card_swap_confirm_rect(), "Confirm", _card_swap_confirm_rect().has_point(_hover_mouse_pos), sel_n == 0, "confirm")
+		TCGTheme.draw_genshin_pill(c, _card_swap_cancel_rect(), "Cancel", _card_swap_cancel_rect().has_point(_hover_mouse_pos), false, "cancel")
+		return
+
+	# 4. Selected targeted card instruction banner (only for cards needing a character target)
 	if selected_hand_index >= 0 and selected_hand_index < p.hand.size() and pay_pending.is_empty() and drag_state.is_empty():
 		var cname: String = p.hand[selected_hand_index]
-		var band := Rect2(cx - 340.0, center_band_y, 680.0, 44.0)
-		TCGTheme.draw_rounded_box(c, band, Color(0.08, 0.14, 0.22, 0.92), TCGTheme.GOLD_L, 10, 2)
-		TCGTheme.draw_text_centered(
-			c,
-			"Playing %s — click a highlighted target, [T] to Tune, or [Esc]/Right-Click to cancel" % cname,
-			band.get_center(),
-			15,
-			TCGTheme.GOLD_L,
-			true,
-			true
-		)
+		var cd_sel: CardDataSystem.CardData = CardDataSystem.get_card_def(cname)
+		if cd_sel != null and cd_sel.needs_char and is_my_turn() and game_state.phase == "action":
+			var band := Rect2(cx - 280.0, center_band_y, 560.0, 42.0)
+			TCGTheme.draw_rounded_box(c, band, Color(0.06, 0.10, 0.16, 0.92), TCGTheme.GOLD_L, 21, 1.8)
+			TCGTheme.draw_text_centered(
+				c,
+				"Select %s to equip %s  ·  [Esc] Cancel" % [cd_sel.char_name if not cd_sel.char_name.is_empty() else "target", cname],
+				band.get_center(),
+				14,
+				TCGTheme.GOLD_L,
+				true,
+				true
+			)
+
+
+func _draw_center_roll_stage(c: CanvasItem, w: float, h: float) -> void:
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var cx: float = safe.get_center().x
+	var cy: float = safe.get_center().y
+	var p := me()
+	var n_dice: int = p.dice.size()
+
+	# Dramatic spotlight backdrop focusing attention on the center-table dice tray
+	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.04, 0.07, 0.64))
+	c.draw_circle(Vector2(cx, cy - 8.0), 275.0, Color(0.95, 0.80, 0.42, 0.06))
+	c.draw_circle(Vector2(cx, cy - 8.0), 175.0, Color(0.98, 0.86, 0.50, 0.05))
+
+	# Clean Genshin typography header
+	var hdr_y: float = cy - 196.0
+	var title_txt := "Reroll" if p.rerolls > 0 else "Roll Phase"
+	var sub_txt := "Select dice to reroll (%d reroll left)" % p.rerolls if p.rerolls > 0 else "Review your Elemental Dice"
+	TCGTheme.draw_text_centered(c, title_txt, Vector2(cx, hdr_y), 32, TCGTheme.GOLD_L, true, true)
+	c.draw_line(Vector2(cx - 170.0, hdr_y + 24.0), Vector2(cx + 170.0, hdr_y + 24.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.60), 1.4)
+	TCGTheme.draw_text_centered(c, sub_txt, Vector2(cx, hdr_y + 44.0), 16, TCGTheme.TEXT, false, true)
+
+	# Large tumbling faceted dice settling into 2 neat rows
+	var tumble_u: float = clampf(_roll_stage_t / 0.44, 0.0, 1.0)
+	var ease_out: float = 1.0 - pow(1.0 - tumble_u, 3.0)
+	for i in range(n_dice):
+		var face: String = p.dice[i]
+		var dst: Rect2 = _center_roll_die_rect(i, n_dice)
+		var sel: bool = roll_selected_dice.has(i)
+		var hov: bool = (_roll_hover_die == i)
+
+		# Smooth energetic scatter-and-settle entrance from center table
+		var start_ang: float = float(i) * 1.37 + 0.5
+		var scatter_r: float = (1.0 - ease_out) * 90.0
+		var scatter_off := Vector2(cos(start_ang) * scatter_r, sin(start_ang) * scatter_r - (1.0 - ease_out) * 32.0)
+		var lift_y: float = -10.0 if sel else (-5.0 if hov else 0.0)
+		var sc: float = lerpf(0.65, 1.0, ease_out) * (1.07 if sel else (1.04 if hov else 1.0))
+		var cur_center := dst.get_center() + scatter_off + Vector2(0.0, lift_y)
+		var cur_sz := dst.size * sc
+		var draw_r := Rect2(cur_center - cur_sz * 0.5, cur_sz)
+
+		# Golden diamond halo + pulse when selected for reroll
+		if sel:
+			var pulse := 0.5 + 0.5 * sin(_clock * 6.0 + float(i))
+			var hr := cur_sz.x * 0.58 + pulse * 3.0
+			var halo_pts := PackedVector2Array([
+				Vector2(cur_center.x, cur_center.y - hr),
+				Vector2(cur_center.x + hr, cur_center.y),
+				Vector2(cur_center.x, cur_center.y + hr),
+				Vector2(cur_center.x - hr, cur_center.y),
+			])
+			c.draw_colored_polygon(halo_pts, Color(1.0, 0.88, 0.45, 0.22 + 0.10 * pulse))
+			c.draw_circle(cur_center, cur_sz.x * 0.56, Color(1.0, 0.90, 0.52, 0.16))
+			c.draw_arc(cur_center, cur_sz.x * 0.56, 0.0, TAU, 32, TCGTheme.GOLD_L, 2.4)
+		elif hov:
+			c.draw_arc(cur_center, cur_sz.x * 0.54, 0.0, TAU, 28, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.65), 1.8)
+
+		TCGArt.draw_die(c, face, draw_r, sel, hov)
+
+		if sel:
+			var badge_p := Vector2(draw_r.end.x - 8.0, draw_r.position.y + 8.0)
+			c.draw_circle(badge_p, 11.0, Color8(212, 68, 62))
+			c.draw_arc(badge_p, 11.0, 0.0, TAU, 18, TCGTheme.GOLD_L, 1.5)
+			TCGTheme.draw_text_centered(c, "↻", badge_p, 13, Color.WHITE, true, false)
+
+	# Centered Genshin ivory Confirm pill
+	var n_reroll: int = roll_selected_dice.size()
+	var btn_lbl := "Confirm" if (n_reroll == 0 or p.rerolls <= 0) else ("Reroll %d  ·  Confirm" % n_reroll)
+	TCGTheme.draw_genshin_pill(c, _roll_confirm_rect(), btn_lbl, _action_btn_hovered, false, "confirm")
 
 
 func _draw_dragged_card(c: CanvasItem) -> void:
@@ -2901,35 +3450,109 @@ func _draw_fx_layer(c: CanvasItem) -> void:
 				if origin_p.distance_to(target_pos) > 28.0:
 					_draw_aim_arrow(c, origin_p, target_pos)
 
-	# T5.9 Center Card Play Preview (1.42x pop in middle of board)
-	if not _card_preview.is_empty():
-		var p_name: String = String(_card_preview.get("card_name", ""))
-		var pt: float = float(_card_preview.get("t", 0.0))
-		var pdur: float = maxf(0.01, float(_card_preview.get("dur", 0.95)))
-		var pu: float = clampf(pt / pdur, 0.0, 1.0)
-		var p_alpha: float = 1.0 if pu < 0.65 else maxf(0.0, (1.0 - pu) / 0.35)
-		var pop: float = (0.76 + 0.24 * sin(minf(pu * 3.5, 1.0) * PI * 0.5)) if pu < 0.2 else (1.0 - 0.16 * maxf(0.0, (pu - 0.78) / 0.22))
-		var pc: Vector2 = _ensure_lay().get("play_preview_center", Vector2(960, 452))
-		var cw: float = 148.0 * 1.42 * pop
-		var ch: float = 210.0 * 1.42 * pop
-		var pr := Rect2(pc.x - cw * 0.5, pc.y - ch * 0.5, cw, ch)
-		TCGTheme.draw_rounded_box(c, pr.grow(10.0), Color(0.95, 0.80, 0.42, 0.14 * p_alpha), Color(0.96, 0.84, 0.48, 0.72 * p_alpha), 16, 2.5, Vector2(0, 8), 110)
-		TCGActionCardView.draw_card_surface(c, pr, p_name, true, true, true, false, false, false)
-
-	# Flying cards with cubic ease-out, scale pop, and golden aura
+	# Unified single smooth card-play showcase (player plays left, AI plays right -> golden sparkle dissolve)
 	for fc in _flying_cards:
 		var u: float = clampf(float(fc["t"]) / maxf(0.01, float(fc["dur"])), 0.0, 1.0)
-		var ease_u: float = 1.0 - pow(1.0 - u, 3.0)
-		var p_cur: Vector2 = (fc["from"] as Vector2).lerp(fc["to"] as Vector2, ease_u)
-		var sc: float = 0.72 + 0.40 * sin(minf(u * 1.4, 1.0) * PI * 0.5)
-		if u > 0.75:
-			sc = lerpf(1.12, 0.92, (u - 0.75) / 0.25)
-		var cw: float = 138.0 * sc
-		var ch: float = 196.0 * sc
+		var move_u: float = clampf(u / 0.30, 0.0, 1.0)
+		var ease_move: float = 1.0 - pow(1.0 - move_u, 4.0)
+		var p_cur: Vector2 = (fc["from"] as Vector2).lerp(fc["to"] as Vector2, ease_move)
+		var sc: float = lerpf(0.76, 1.15, ease_move)
+		var alpha: float = 1.0
+		var dissolve_u: float = 0.0
+		if u > 0.68:
+			dissolve_u = (u - 0.68) / 0.32
+			alpha = 1.0 - dissolve_u
+			sc = lerpf(1.15, 1.02, dissolve_u)
+			p_cur.y -= dissolve_u * 22.0
+		var cw: float = 152.0 * sc
+		var ch: float = 212.0 * sc
 		var r := Rect2(p_cur.x - cw * 0.5, p_cur.y - ch * 0.5, cw, ch)
-		var glow_a: float = 0.38 * (1.0 - maxf(0.0, (u - 0.7) / 0.3))
-		TCGTheme.draw_rounded_box(c, r.grow(8.0), Color(0.95, 0.80, 0.42, glow_a * 0.4), Color(0.95, 0.82, 0.45, glow_a), 14, 2)
-		TCGActionCardView.draw_card_surface(c, r, String(fc["card_name"]), true, false, true, false, false, false)
+		var glow_a: float = 0.48 * alpha
+		TCGTheme.draw_rounded_box(c, r.grow(8.0), Color(0.95, 0.80, 0.42, glow_a * 0.30), Color(0.98, 0.86, 0.50, glow_a), 14, 2.2)
+		if alpha > 0.06:
+			TCGActionCardView.draw_card_surface(c, r, String(fc["card_name"]), true, false, true, false, false, false)
+		# Warm golden dissolve sparks rising cleanly off the card
+		if dissolve_u > 0.0:
+			for sp_i in range(10):
+				var seed_a: float = float(sp_i) * 1.17
+				var sx: float = p_cur.x + sin(seed_a * 2.1) * (cw * 0.48)
+				var sy: float = p_cur.y + cos(seed_a * 1.7) * (ch * 0.38) - dissolve_u * (48.0 + float(sp_i % 3) * 18.0)
+				var sr: float = (4.8 - dissolve_u * 3.0)
+				if sr > 0.5:
+					var sp_col := Color(1.0, 0.90, 0.52, alpha * 0.92)
+					c.draw_colored_polygon(PackedVector2Array([
+						Vector2(sx, sy - sr), Vector2(sx + sr, sy), Vector2(sx, sy + sr), Vector2(sx - sr, sy)
+					]), sp_col)
+
+	# End-Phase / Draw Cards 2-card center face-up reveal before tucking down into hand
+	if not _draw_reveal_cards.is_empty():
+		var safe_dr: Rect2 = _ensure_lay()["safe"]
+		var dcx: float = safe_dr.get_center().x
+		var dcy: float = safe_dr.get_center().y + 116.0
+		for dr in _draw_reveal_cards:
+			var du: float = clampf(float(dr["t"]) / maxf(0.01, float(dr["dur"])), 0.0, 1.0)
+			var s_idx: int = int(dr["slot_idx"])
+			var tot: int = maxi(1, int(dr["total"]))
+			var x_off: float = (float(s_idx) - float(tot - 1) * 0.5) * 156.0
+			var show_pos := Vector2(dcx + x_off, dcy)
+			var in_u: float = clampf(du / 0.25, 0.0, 1.0)
+			var out_u: float = clampf((du - 0.68) / 0.32, 0.0, 1.0)
+			var cur_p := show_pos + Vector2(0.0, (1.0 - pow(1.0 - in_u, 3.0)) * 30.0)
+			cur_p = cur_p.lerp(Vector2(dcx + x_off * 0.5, safe_dr.end.y - 36.0), out_u * out_u)
+			var sc_d: float = lerpf(0.75, 1.02, 1.0 - pow(1.0 - in_u, 3.0)) * lerpf(1.0, 0.68, out_u)
+			var alpha_d: float = 1.0 - out_u
+			if alpha_d > 0.06:
+				var dr_w: float = 132.0 * sc_d
+				var dr_h: float = 186.0 * sc_d
+				var dr_r := Rect2(cur_p.x - dr_w * 0.5, cur_p.y - dr_h * 0.5, dr_w, dr_h)
+				TCGTheme.draw_rounded_box(c, dr_r.grow(5.0), Color(0.95, 0.80, 0.42, 0.14 * alpha_d), Color(0.98, 0.86, 0.50, 0.60 * alpha_d), 12, 1.8)
+				TCGActionCardView.draw_card_surface(c, dr_r, String(dr["card_name"]), true, false, true, false, false, false)
+
+	# Crisp elemental slash / bolt / splash impact VFX across struck character cards
+	for fx in _impact_fx:
+		var fu: float = clampf(float(fx["t"]) / maxf(0.01, float(fx["dur"])), 0.0, 1.0)
+		var fa: float = 1.0 - fu * fu
+		var fp: Vector2 = fx["pos"]
+		var dtype: String = String(fx["dtype"])
+		var col: Color = TCGTheme.elem_color(dtype)
+		var core_col := Color(1.0, 0.98, 0.92, fa)
+		var glow_col := Color(col.r, col.g, col.b, fa * 0.85)
+		var ring_r: float = lerpf(18.0, 86.0, 1.0 - pow(1.0 - fu, 3.0))
+		c.draw_arc(fp, ring_r, 0.0, TAU, 36, glow_col, maxf(1.2, 4.5 * fa))
+		if dtype == "Electro":
+			var zpts := PackedVector2Array([
+				fp + Vector2(-42.0, -54.0),
+				fp + Vector2(-6.0, -14.0),
+				fp + Vector2(-18.0, 4.0),
+				fp + Vector2(18.0, 20.0),
+				fp + Vector2(4.0, 32.0),
+				fp + Vector2(40.0, 62.0),
+			])
+			c.draw_polyline(zpts, glow_col, 8.0 * fa, true)
+			c.draw_polyline(zpts, core_col, 3.2 * fa, true)
+		elif dtype == "Hydro":
+			for drop_i in range(6):
+				var ang: float = float(drop_i) * (TAU / 6.0) + 0.3
+				var dp := fp + Vector2(cos(ang), sin(ang)) * (16.0 + fu * 58.0)
+				c.draw_circle(dp, maxf(1.5, 6.5 * fa), glow_col)
+				c.draw_circle(dp, maxf(0.8, 3.0 * fa), core_col)
+		elif dtype == "Anemo":
+			c.draw_arc(fp, ring_r * 0.72, fu * 4.0, fu * 4.0 + PI * 1.4, 24, core_col, maxf(1.2, 3.4 * fa))
+			c.draw_arc(fp, ring_r * 0.46, -fu * 5.0, -fu * 5.0 + PI * 1.2, 20, glow_col, maxf(1.2, 3.0 * fa))
+		elif dtype == "Geo":
+			for sh_i in range(5):
+				var ang: float = float(sh_i) * (TAU / 5.0) - 0.5
+				var sp := fp + Vector2(cos(ang), sin(ang)) * (12.0 + fu * 52.0)
+				var sr: float = maxf(2.0, 8.5 * fa)
+				c.draw_colored_polygon(PackedVector2Array([
+					sp + Vector2(0, -sr), sp + Vector2(sr * 0.75, 0), sp + Vector2(0, sr), sp + Vector2(-sr * 0.75, 0)
+				]), glow_col)
+		else:
+			# Pyro & Physical crisp diagonal slash + cross flare
+			var sl_len: float = lerpf(32.0, 64.0, fu)
+			c.draw_line(fp + Vector2(-sl_len, -sl_len * 0.85), fp + Vector2(sl_len, sl_len * 0.85), glow_col, 9.0 * fa)
+			c.draw_line(fp + Vector2(-sl_len, -sl_len * 0.85), fp + Vector2(sl_len, sl_len * 0.85), core_col, 3.2 * fa)
+			c.draw_line(fp + Vector2(sl_len * 0.55, -sl_len * 0.45), fp + Vector2(-sl_len * 0.55, sl_len * 0.45), glow_col, 4.5 * fa)
 
 	# Phase announcement banners
 	for b in _banners:
@@ -2937,15 +3560,24 @@ func _draw_fx_layer(c: CanvasItem) -> void:
 		var alpha: float = 1.0 if u < 0.72 else maxf(0.0, (1.0 - u) / 0.28)
 		TCGTheme.draw_phase_announcement(c, String(b["title"]), String(b["sub"]), b["color"] as Color, float(b["y"]), alpha)
 
-	# Action ribbons (skill/burst/switch/defeat announcements)
+	# Action ribbons (Genshin side-mounted character portrait skill/switch/defeat banners)
 	for r in _ribbons:
 		var t_cur: float = float(r["t"])
 		var dur: float = float(r["dur"])
 		var alpha: float = 1.0 if t_cur < dur - 0.3 else maxf(0.0, (dur - t_cur) / 0.3)
-		var slide: float = 1.0 - pow(1.0 - clampf(t_cur / 0.25, 0.0, 1.0), 2.0)
-		var y_off: float = (1.0 - slide) * (-30.0 if not bool(r["mine"]) else 30.0)
-		var pos: Vector2 = (r["pos"] as Vector2) + Vector2(0.0, y_off)
-		TCGTheme.draw_action_ribbon(c, String(r["title"]), String(r["sub"]), r["accent"] as Color, pos, alpha)
+		var slide: float = 1.0 - pow(1.0 - clampf(t_cur / 0.24, 0.0, 1.0), 3.0)
+		var x_off: float = (1.0 - slide) * (46.0 if bool(r.get("align_right", false)) else -46.0)
+		var pos: Vector2 = (r["pos"] as Vector2) + Vector2(x_off, 0.0)
+		TCGTheme.draw_action_ribbon(
+			c,
+			String(r["title"]),
+			String(r["sub"]),
+			r["accent"] as Color,
+			pos,
+			alpha,
+			String(r.get("char_name", "")),
+			bool(r.get("align_right", false))
+		)
 
 	# Reaction Pills (Genshin-style elemental reactions)
 	for p in _reaction_pills:
@@ -2956,91 +3588,116 @@ func _draw_fx_layer(c: CanvasItem) -> void:
 		var cur_pos := Vector2((p["pos"] as Vector2).x, float_y)
 		TCGTheme.draw_reaction_pill(c, String(p["title"]), String(p["sub"]), p["elements"] as Array, cur_pos, alpha)
 
-	# Damage / Heal Floaters with scale pop and shadow
+	# Genshin Circular Gold-Rimmed Damage / Heal Pop Badges + Cleanse Pill
 	for fl in _floaters:
 		var pos: Vector2 = fl["pos"]
 		var col: Color = fl["col"]
 		var ttl: float = float(fl["ttl"])
 		var max_ttl: float = float(fl.get("max_ttl", 1.4))
 		var elapsed: float = max_ttl - ttl
-		var pop: float = 1.0 + 0.35 * maxf(0.0, 1.0 - elapsed / 0.15)
+		var pop: float = 1.0 + 0.36 * maxf(0.0, 1.0 - elapsed / 0.16)
 		var alpha: float = 1.0 if elapsed < max_ttl * 0.65 else maxf(0.0, ttl / (max_ttl * 0.35))
-		var text_col := Color(col.r, col.g, col.b, alpha)
-		var shadow_col := Color(0.04, 0.02, 0.01, alpha * 0.85)
-		TCGTheme.draw_text_centered(c, String(fl["text"]), pos + Vector2(2, 2), int(27.0 * pop), shadow_col, true, false)
-		TCGTheme.draw_text_centered(c, String(fl["text"]), pos, int(27.0 * pop), text_col, true, false)
+		var txt: String = String(fl["text"])
+		if String(fl.get("kind", "")) == "cleanse":
+			var pw: float = maxf(124.0, float(txt.length()) * 9.5 + 24.0) * minf(1.15, pop)
+			var ph: float = 30.0 * minf(1.15, pop)
+			var pr := Rect2(pos.x - pw * 0.5, pos.y - ph * 0.5, pw, ph)
+			TCGTheme.draw_rounded_box(c, pr, Color(0.05, 0.22, 0.20, 0.94 * alpha), Color(col.r, col.g, col.b, alpha), int(ph * 0.5), 2.0, Vector2(0, 2), int(80.0 * alpha))
+			TCGTheme.draw_text_centered(c, txt, pos, int(13.0 * minf(1.15, pop)), Color(0.88, 1.0, 0.96, alpha), true, true)
+			continue
+		var is_heal: bool = txt.begins_with("+")
+		var badge_r: float = 22.0 * pop
+		var bg_col := Color(0.11, 0.40, 0.28, 0.94 * alpha) if is_heal else Color(0.56, 0.14, 0.14, 0.94 * alpha)
+		var rim_col := Color(col.r, col.g, col.b, alpha)
+		c.draw_circle(pos + Vector2(0, 3.0), badge_r, Color(0.0, 0.0, 0.0, 0.42 * alpha))
+		c.draw_circle(pos, badge_r, bg_col)
+		c.draw_arc(pos, badge_r, 0.0, TAU, 28, rim_col, 2.8)
+		c.draw_arc(pos, badge_r - 3.2, 0.0, TAU, 24, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.85 * alpha), 1.3)
+		TCGTheme.draw_text_centered(c, txt, pos, int(21.0 * pop), Color(1.0, 0.98, 0.92, alpha), true, true)
 
 
 func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
-	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.04, 0.07, 0.76))
+	## Genshin Inline Dice Payment Drawer: keeps the 3v3 battlefield & enemy -DMG previews clearly visible!
+	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.04, 0.07, 0.36))
 
+	var safe: Rect2 = _ensure_lay()["safe"]
+	var cx: float = safe.get_center().x
 	var prects := _payment_panel_rects()
 	var left: Rect2 = prects[0]
 	var right: Rect2 = prects[1]
-	TCGTheme.draw_gold_frame(c, left, Color(0.07, 0.11, 0.16, 0.98), 16, true)
-	TCGTheme.draw_gold_frame(c, right, Color(0.07, 0.11, 0.16, 0.98), 16, true)
 
 	var is_tune: bool = bool(pay_pending.get("tune", false))
 	var title: String = String(pay_pending.get("title", "Action"))
 	var detail: String = String(pay_pending.get("detail", ""))
 	var sel_dice: Array = pay_pending.get("selected_dice", []).duplicate()
 	sel_dice.sort()
-
-	TCGTheme.draw_text_pos(c, "ELEMENTAL TUNING" if is_tune else "ACTION PAYMENT", Vector2(left.position.x + 24, left.position.y + 18), 19, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_pos(c, title, Vector2(left.position.x + 24, left.position.y + 58), 24, TCGTheme.TEXT, true, true)
-	c.draw_line(Vector2(left.position.x + 22, left.position.y + 98), Vector2(left.end.x - 22, left.position.y + 98), TCGTheme.GOLD_D, 1.0)
+	var p := me()
 
 	var valid: bool = false
 	var total_needed: int = 1
-	var p := me()
-
 	if is_tune:
 		var elig := tunable_dice(view_player)
 		valid = (sel_dice.size() == 1 and elig.has(int(sel_dice[0])))
-		TCGTheme.draw_text_pos(c, "Choose 1 die to convert into %s." % p.get_active_char().get_defn().element, Vector2(left.position.x + 24, left.position.y + 120), 17, TCGTheme.TEXT, true, false)
-		TCGTheme.draw_text_pos(c, "Matching and Omni dice cannot be converted.", Vector2(left.position.x + 24, left.position.y + 150), 14, TCGTheme.DIM, false, false)
-		TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 190, left.size.x - 48, 210), 16, TCGTheme.TEXT, 22, false)
 	else:
 		var cost: CardDataSystem.CostData = pay_pending["cost"]
 		total_needed = cost.n + cost.unaligned
 		valid = TCGDiceSystem.payment_ok(p.dice, cost, sel_dice)
-		TCGTheme.draw_text_pos(c, "REQUIRED COST", Vector2(left.position.x + 24, left.position.y + 114), 16, TCGTheme.GOLD_L, true, false)
+
+	# 1. Left compact action/card details card (leaves the center 3v3 arena completely unobstructed)
+	TCGTheme.draw_gold_frame(c, left, Color(0.05, 0.08, 0.14, 0.94), 12, true)
+	TCGTheme.draw_text_pos(c, "ELEMENTAL TUNING" if is_tune else "ACTION DETAILS", Vector2(left.position.x + 14.0, left.position.y + 12.0), 12, TCGTheme.GOLD_L, true, true)
+	var title_fsz: int = TCGTheme.fit_font_size(title, left.size.x - 28.0, 18, 13, true)
+	TCGTheme.draw_text_pos(c, title, Vector2(left.position.x + 14.0, left.position.y + 32.0), title_fsz, TCGTheme.TEXT, true, true)
+	c.draw_line(Vector2(left.position.x + 14.0, left.position.y + 60.0), Vector2(left.end.x - 14.0, left.position.y + 60.0), TCGTheme.GOLD_D, 1.0)
+
+	if is_tune:
+		TCGTheme.draw_wrapped(
+			c,
+			"Convert 1 non-matching die into %s.\n%s" % [p.get_active_char().get_defn().element, detail],
+			Rect2(left.position.x + 14.0, left.position.y + 72.0, left.size.x - 28.0, left.size.y - 84.0),
+			13,
+			TCGTheme.TEXT,
+			19,
+			false
+		)
+	else:
+		var cost: CardDataSystem.CostData = pay_pending["cost"]
 		var pairs := TCGActionCardView.cost_to_pairs(cost)
-		var gx: float = left.position.x + 40.0
+		var gx: float = left.position.x + 28.0
 		for pair in pairs:
-			TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, left.position.y + 156), 15.0)
-			gx += 38.0
+			TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, left.position.y + 84.0), 12.0)
+			gx += 32.0
 		var prev_lines: Array = _active_preview.get("summary_lines", []) if bool(_active_preview.get("ok", false)) else []
 		if not prev_lines.is_empty():
-			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 194, left.size.x - 48, 96), 15, TCGTheme.TEXT, 20, false)
-			var imp_rect := Rect2(left.position.x + 22, left.position.y + 296, left.size.x - 44, maxf(84.0, left.end.y - (left.position.y + 354.0)))
-			TCGTheme.draw_rounded_box(c, imp_rect, Color(0.05, 0.08, 0.13, 0.94), TCGTheme.GOLD_D, 10, 1)
-			TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(imp_rect.position.x + 12, imp_rect.position.y + 8), 13, TCGTheme.GOLD_L, true, true)
-			TCGTheme.draw_wrapped(c, "\n".join(prev_lines), Rect2(imp_rect.position.x + 12, imp_rect.position.y + 28, imp_rect.size.x - 24, imp_rect.size.y - 34), 14, TCGTheme.HEAL, 19, false)
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 14.0, left.position.y + 108.0, left.size.x - 28.0, 74.0), 13, TCGTheme.TEXT, 18, false)
+			var imp_rect := Rect2(left.position.x + 12.0, left.position.y + 186.0, left.size.x - 24.0, left.end.y - (left.position.y + 198.0))
+			TCGTheme.draw_rounded_box(c, imp_rect, Color(0.04, 0.07, 0.11, 0.94), TCGTheme.GOLD_D, 8, 1)
+			TCGTheme.draw_text_pos(c, "EXPECTED IMPACT", Vector2(imp_rect.position.x + 10.0, imp_rect.position.y + 6.0), 11, TCGTheme.GOLD_L, true, true)
+			TCGTheme.draw_wrapped(c, "\n".join(prev_lines), Rect2(imp_rect.position.x + 10.0, imp_rect.position.y + 24.0, imp_rect.size.x - 20.0, imp_rect.size.y - 28.0), 12, TCGTheme.HEAL, 16, false)
 		else:
-			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 24, left.position.y + 200, left.size.x - 48, 220), 16, TCGTheme.TEXT, 22, false)
+			TCGTheme.draw_wrapped(c, detail, Rect2(left.position.x + 14.0, left.position.y + 112.0, left.size.x - 28.0, left.size.y - 124.0), 13, TCGTheme.TEXT, 19, false)
 
-	var status_msg: String = ""
-	var status_col: Color = TCGTheme.GOLD_L
-	if valid:
-		status_msg = "READY — click Confirm or press Enter"
-		status_col = TCGTheme.GREEN
-	elif sel_dice.size() < total_needed:
-		status_msg = "Select %d more die/dice" % (total_needed - sel_dice.size())
-	else:
-		status_msg = "Selected combination does not match cost"
-		status_col = TCGTheme.RED
-	TCGTheme.draw_text_pos(c, status_msg, Vector2(left.position.x + 24, left.end.y - 42), 17, status_col, true, true)
+	# 2. Right-side warm golden translucent Genshin Dice Drawer
+	TCGTheme.draw_rounded_box(c, right, Color(0.24, 0.18, 0.11, 0.88), TCGTheme.GOLD_L, 14, 2, Vector2(-4, 4), 110)
+	var inner_r := right.grow(-4.0)
+	var isb := StyleBoxFlat.new()
+	isb.bg_color = Color(0, 0, 0, 0)
+	isb.border_color = Color(TCGTheme.GOLD_D.r, TCGTheme.GOLD_D.g, TCGTheme.GOLD_D.b, 0.65)
+	isb.set_border_width_all(1)
+	isb.set_corner_radius_all(10)
+	c.draw_style_box(isb, inner_r)
 
-	# Right box: interactive dice grid
-	TCGTheme.draw_text_pos(c, "SELECT DICE TO SPEND", Vector2(right.position.x + 24, right.position.y + 18), 20, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_pos(c, "Click each die to toggle selection", Vector2(right.position.x + 24, right.position.y + 48), 15, TCGTheme.DIM, false, false)
+	var drawer_hdr := "Select 1 Die" if is_tune else ("Elemental Dice (%d/%d)" % [sel_dice.size(), total_needed])
+	TCGTheme.draw_text_centered(c, drawer_hdr, Vector2(right.get_center().x, right.position.y + 24.0), 16, TCGTheme.GOLD_L, true, true)
+	TCGTheme.draw_text_centered(c, "Click dice to toggle", Vector2(right.get_center().x, right.position.y + 46.0), 12, Color8(226, 214, 190), false, false)
+	c.draw_line(Vector2(right.position.x + 18.0, right.position.y + 62.0), Vector2(right.end.x - 18.0, right.position.y + 62.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.45), 1.0)
 
 	var elig_tune := tunable_dice(view_player)
 	for i in range(p.dice.size()):
 		var face: String = p.dice[i]
 		var tile := _pay_die_rect(i)
 		var chosen: bool = sel_dice.has(i)
+		var hov: bool = (_pay_die_hovered == i)
 		var eligible: bool = true
 		if is_tune:
 			eligible = elig_tune.has(i)
@@ -3048,15 +3705,54 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 			var cost: CardDataSystem.CostData = pay_pending["cost"]
 			eligible = (face == CardDataSystem.OMNI or face == cost.element or cost.element.is_empty() or cost.unaligned > 0)
 
-		var fill := Color8(83, 66, 38) if chosen else (Color8(38, 52, 68) if eligible else Color8(24, 30, 38))
-		var edge := TCGTheme.GOLD_L if (chosen or _pay_die_hovered == i) else (TCGTheme.GOLD if eligible else TCGTheme.DIM)
-		TCGTheme.draw_rounded_box(c, tile, fill, edge, 12, 3 if chosen else 1)
+		var d_sz: float = minf(tile.size.x, tile.size.y) * (0.94 if chosen else 0.84)
+		var dc := tile.get_center() + Vector2(0.0, -4.0 if chosen else (-2.0 if hov else 0.0))
+		if chosen:
+			c.draw_circle(dc, d_sz * 0.58, Color(1.0, 0.88, 0.44, 0.24))
+			c.draw_arc(dc, d_sz * 0.56, 0.0, TAU, 28, TCGTheme.GOLD_L, 2.2)
+		elif hov and eligible:
+			c.draw_arc(dc, d_sz * 0.52, 0.0, TAU, 24, Color(TCGTheme.GOLD_L.r, TCGTheme.GOLD_L.g, TCGTheme.GOLD_L.b, 0.65), 1.6)
 
-		var die_box := Rect2(tile.get_center().x - 24, tile.get_center().y - 22, 48, 44)
-		TCGArt.draw_die(c, face, die_box, chosen, _pay_die_hovered == i)
+		var die_box := Rect2(dc.x - d_sz * 0.5, dc.y - d_sz * 0.5, d_sz, d_sz)
+		TCGArt.draw_die(c, face, die_box, chosen, hov)
+		if not eligible and not chosen:
+			c.draw_circle(dc, d_sz * 0.44, Color(0.05, 0.06, 0.09, 0.52))
+		if chosen:
+			var chk_c := Vector2(die_box.end.x - 4.0, die_box.position.y + 4.0)
+			c.draw_circle(chk_c, 9.5, Color8(242, 232, 206))
+			c.draw_arc(chk_c, 9.5, 0.0, TAU, 16, TCGTheme.GOLD, 1.5)
+			TCGTheme.draw_text_centered(c, "✓", chk_c, 12, Color8(46, 38, 28), true, false)
 
-	TCGTheme.draw_plaque(c, _pay_cancel_rect(), "Cancel [Esc]", TCGTheme.RED, _pay_btn_hovered == 0)
-	TCGTheme.draw_plaque(c, _pay_confirm_rect(), "Confirm [Enter]", TCGTheme.GREEN, _pay_btn_hovered == 1, not valid)
+	# 3. Top-Right Circular Cancel (✕) Button
+	var cancel_r := _pay_cancel_rect()
+	var cancel_c := cancel_r.get_center()
+	var cancel_rad := cancel_r.size.x * 0.5
+	var c_hov: bool = (_pay_btn_hovered == 0)
+	c.draw_circle(cancel_c + Vector2(0, 2), cancel_rad, Color(0, 0, 0, 0.45))
+	c.draw_circle(cancel_c, cancel_rad, Color8(244, 236, 218) if c_hov else Color8(226, 218, 200))
+	c.draw_arc(cancel_c, cancel_rad, 0.0, TAU, 28, TCGTheme.GOLD_L if c_hov else TCGTheme.GOLD, 2.2)
+	var x_d: float = 8.5
+	c.draw_line(cancel_c + Vector2(-x_d, -x_d), cancel_c + Vector2(x_d, x_d), Color8(58, 48, 38), 2.8)
+	c.draw_line(cancel_c + Vector2(x_d, -x_d), cancel_c + Vector2(-x_d, x_d), Color8(58, 48, 38), 2.8)
+
+	# 4. Center-Bottom Sleek Action Strip + Iconic Genshin Ivory Confirm Pill
+	var conf_r := _pay_confirm_rect()
+	var strip_y: float = conf_r.position.y - 36.0
+	var strip_w: float = 520.0
+	var strip_r := Rect2(cx - strip_w * 0.5, strip_y - 16.0, strip_w, 32.0)
+	TCGTheme.draw_rounded_box(c, strip_r, Color(0.05, 0.08, 0.13, 0.84), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.65), 16, 1.2)
+	var prompt_txt: String = title
+	var status_col: Color = TCGTheme.GOLD_L
+	if not valid:
+		if sel_dice.size() < total_needed:
+			prompt_txt = "%s  ·  Select %d more" % [title, total_needed - sel_dice.size()]
+		else:
+			prompt_txt = "Selected dice do not match required cost"
+			status_col = TCGTheme.RED
+	var p_fsz: int = TCGTheme.fit_font_size(prompt_txt, strip_w - 24.0, 15, 11, true)
+	TCGTheme.draw_text_centered(c, prompt_txt, strip_r.get_center(), p_fsz, status_col, true, true)
+
+	TCGTheme.draw_genshin_pill(c, conf_r, "Confirm", _pay_btn_hovered == 1, not valid, "confirm")
 
 
 func _draw_inspect_tooltip(c: CanvasItem) -> void:
@@ -3094,12 +3790,32 @@ func _draw_inspect_tooltip(c: CanvasItem) -> void:
 					TCGTheme.draw_text_pos(c, reason, Vector2(box.position.x + 14, box.end.y - 24), 13, TCGTheme.RED, true, false)
 				return
 
-	# 2. Clicked Hand Card (1st click = clean left card preview, 2nd click = try to play)
+	# 2. Clicked Hand Card — Genshin TCG side-by-side Full-Art Card + Dark Detail Panel
 	if selected_hand_index >= 0 and selected_hand_index < me().hand.size():
 		var cd: CardDataSystem.CardData = CardDataSystem.get_card_def(me().hand[selected_hand_index])
 		if cd != null:
-			var large_r := Rect2(safe.position.x + 18.0, safe.position.y + 208.0, 236.0, 346.0)
-			TCGActionCardView.draw_card_surface(c, large_r, cd.name, true, false, true, true, false, false)
+			var card_r := Rect2(safe.position.x + 20.0, safe.position.y + 150.0, 198.0, 282.0)
+			TCGActionCardView.draw_card_surface(c, card_r, cd.name, true, false, true, false, false, false)
+
+			var info_r := Rect2(card_r.end.x + 12.0, card_r.position.y, 268.0, 212.0)
+			TCGTheme.draw_gold_frame(c, info_r, Color(0.05, 0.08, 0.14, 0.95), 12, true)
+			TCGTheme.draw_wrapped(c, cd.name, Rect2(info_r.position.x + 14.0, info_r.position.y + 12.0, info_r.size.x - 28.0, 44.0), 17, TCGTheme.GOLD_L, 21, true)
+			var pairs := TCGActionCardView.cost_to_pairs(cd.cost)
+			var gx: float = info_r.position.x + 26.0
+			if pairs.is_empty():
+				TCGArt.draw_cost_gem(c, "Same", 0, Vector2(gx, info_r.position.y + 70.0), 11.5)
+			else:
+				for pair in pairs:
+					TCGArt.draw_cost_gem(c, String(pair[0]), int(pair[1]), Vector2(gx, info_r.position.y + 70.0), 11.5)
+					gx += 28.0
+			var role_lbl := "%s Card" % CardDataSystem.infer_card_role(cd).capitalize()
+			if not cd.char_name.is_empty():
+				role_lbl += " · %s" % cd.char_name
+			TCGTheme.draw_text_pos(c, role_lbl, Vector2(info_r.position.x + 14.0, info_r.position.y + 92.0), 13, TCGTheme.TEAL, true, false)
+			TCGTheme.draw_wrapped(c, cd.text, Rect2(info_r.position.x + 14.0, info_r.position.y + 114.0, info_r.size.x - 28.0, 68.0), 13, TCGTheme.TEXT, 18, false)
+			var can_play_sel: bool = not get_card_actions_for_hand_index(selected_hand_index).is_empty()
+			var hint_txt := "Click again to play · Drag to Dice / [T] Tune" if (is_my_turn() and game_state.phase == "action" and can_play_sel) else ("Drag to Dice Tray, Right-click, or [T] to Tune" if (is_my_turn() and game_state.phase == "action") else "Inspecting card · [Esc] Close")
+			TCGTheme.draw_text_pos(c, hint_txt, Vector2(info_r.position.x + 14.0, info_r.end.y - 22.0), 11, TCGTheme.GOLD_L if (is_my_turn() and game_state.phase == "action" and not can_play_sel) else TCGTheme.DIM, false, false)
 			return
 
 	# When Phase 9 DetailDrawer is open, it owns status/character inspection.
@@ -3214,53 +3930,129 @@ func _draw_toasts(c: CanvasItem, _w: float) -> void:
 
 
 func _draw_game_over_overlay(c: CanvasItem, w: float, h: float) -> void:
-	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.05, 0.76))
+	## Minimal Genshin Golden Starlight Victory / Defeat Screen
+	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.05, 0.78))
 	var safe: Rect2 = _ensure_lay()["safe"]
 	var center := safe.get_center()
 	var win_p: int = game_state.winner
+	var is_win: bool = (win_p == view_player) or (not human_flags[view_player] and win_p >= 0)
 	var msg := "Draw"
 	var col := TCGTheme.TEXT
 	if win_p >= 0:
 		if human_flags[view_player] and not hotseat:
-			msg = "Victory!" if win_p == view_player else "Defeat"
-			col = TCGTheme.GOLD_L if win_p == view_player else TCGTheme.RED
+			msg = "Victory" if win_p == view_player else "Defeat"
+			col = TCGTheme.GOLD_L if win_p == view_player else Color8(220, 120, 118)
 		else:
-			msg = "%s Wins!" % player_labels[win_p]
+			msg = "%s Wins" % player_labels[win_p]
 			col = TCGTheme.GOLD_L
-	TCGTheme.draw_text_centered(c, msg, Vector2(center.x, center.y - 76.0), 64, col, true, true)
-	TCGTheme.draw_text_centered(c, "Press [R] for Rematch   ·   Press [Esc] for Menu", Vector2(center.x, center.y - 6.0), 21, TCGTheme.TEXT, false, true)
-	TCGTheme.draw_plaque(c, _game_over_rect(0), "Rematch", TCGTheme.GREEN, _over_hover_idx == 0)
-	TCGTheme.draw_plaque(c, _game_over_rect(1), "Main Menu", TCGTheme.GOLD, _over_hover_idx == 1)
+
+	# Celestial starlight burst behind title
+	var title_c := Vector2(center.x, center.y - 84.0)
+	var glow_col := TCGTheme.GOLD_L if is_win else Color8(190, 92, 92)
+	c.draw_circle(title_c, 138.0, Color(glow_col.r, glow_col.g, glow_col.b, 0.08))
+	c.draw_circle(title_c, 74.0, Color(glow_col.r, glow_col.g, glow_col.b, 0.12))
+	c.draw_arc(title_c, 88.0, 0.0, TAU, 48, Color(glow_col.r, glow_col.g, glow_col.b, 0.35), 1.4)
+	# 4-point starlight cross flare
+	c.draw_colored_polygon(PackedVector2Array([
+		title_c + Vector2(0, -118), title_c + Vector2(7, -10), title_c + Vector2(0, 118), title_c + Vector2(-7, -10)
+	]), Color(glow_col.r, glow_col.g, glow_col.b, 0.18))
+	c.draw_colored_polygon(PackedVector2Array([
+		title_c + Vector2(-210, 0), title_c + Vector2(0, -5), title_c + Vector2(210, 0), title_c + Vector2(0, 5)
+	]), Color(glow_col.r, glow_col.g, glow_col.b, 0.28))
+
+	TCGTheme.draw_text_centered(c, msg, title_c, 68, col, true, true)
+
+	# Delicate gold hairline divider with central diamond
+	var div_y: float = center.y - 22.0
+	c.draw_line(Vector2(center.x - 240.0, div_y), Vector2(center.x + 240.0, div_y), Color(glow_col.r, glow_col.g, glow_col.b, 0.65), 1.5)
+	c.draw_colored_polygon(PackedVector2Array([
+		Vector2(center.x, div_y - 5.0), Vector2(center.x + 5.0, div_y), Vector2(center.x, div_y + 5.0), Vector2(center.x - 5.0, div_y)
+	]), glow_col)
+
+	TCGTheme.draw_text_centered(c, "Press [R] for Rematch   ·   [Esc] Main Menu", Vector2(center.x, center.y + 8.0), 16, TCGTheme.DIM, false, true)
+	TCGTheme.draw_genshin_pill(c, _game_over_rect(0), "Rematch", _over_hover_idx == 0, false, "confirm")
+	TCGTheme.draw_genshin_pill(c, _game_over_rect(1), "Main Menu", _over_hover_idx == 1, false, "cancel")
 
 
 func _draw_coin_intro(c: CanvasItem, w: float, h: float) -> void:
-	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.06, 0.72))
+	## Genshin 3v3 VS Lineup Showcase + Turn Order Reveal
+	c.draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.06, 0.84))
 	var safe: Rect2 = _ensure_lay()["safe"]
 	var center: Vector2 = safe.get_center()
-	var panel := Rect2(center.x - 260.0, center.y - 130.0, 520.0, 260.0)
-	TCGTheme.draw_gold_frame(c, panel, TCGTheme.PANEL, 16, true)
-	var cx: float = panel.get_center().x
-	var cy: float = panel.position.y + 92.0
-	var spinning: bool = _intro_t < 1.25
-	var flip_scale: float = absf(cos(_intro_t * PI * 6.0)) if spinning else 1.0
-	var rx: float = maxf(6.0, 44.0 * flip_scale)
-	var pts := PackedVector2Array()
-	for i in range(28):
-		var ang: float = TAU * float(i) / 28.0
-		pts.append(Vector2(cx + cos(ang) * rx, cy + sin(ang) * 44.0))
+	var cx: float = center.x
+	var cy: float = center.y - 24.0
+
+	var slide_u: float = 1.0 - pow(1.0 - clampf(_intro_t / 0.42, 0.0, 1.0), 3.0)
+	var p_own: TCGPlayerSystem.PlayerState = game_state.players[view_player]
+	var p_foe: TCGPlayerSystem.PlayerState = game_state.players[1 - view_player]
+
+	# Soft horizontal celestial band across the arena
+	c.draw_rect(Rect2(0.0, cy - 170.0, w, 340.0), Color(0.06, 0.09, 0.15, 0.56))
+	c.draw_line(Vector2(safe.position.x + 40.0, cy - 170.0), Vector2(safe.end.x - 40.0, cy - 170.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.55), 1.6)
+	c.draw_line(Vector2(safe.position.x + 40.0, cy + 170.0), Vector2(safe.end.x - 40.0, cy + 170.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.55), 1.6)
+
+	var cw: float = 136.0
+	var ch: float = 228.0
+	var gap: float = 16.0
+	var team_w: float = cw * 3.0 + gap * 2.0
+
+	# Left team (Player) sliding in from left
+	var left_x0: float = cx - 96.0 - team_w - (1.0 - slide_u) * 140.0
+	TCGTheme.draw_text_centered(c, _who(view_player).to_upper(), Vector2(left_x0 + team_w * 0.5, cy - ch * 0.5 - 24.0), 17, TCGTheme.GOLD_L, true, true)
+	for i in range(mini(3, p_own.characters.size())):
+		var ch_inst: TCGPlayerSystem.CharacterInstance = p_own.characters[i]
+		var cd: CardDataSystem.CharData = ch_inst.get_defn()
+		var elem: String = cd.element if cd != null else ""
+		var cr := Rect2(left_x0 + float(i) * (cw + gap), cy - ch * 0.5, cw, ch)
+		TCGTheme.draw_gold_frame(c, cr, TCGTheme.PANEL, 12, false)
+		var tex := TCGArt.get_character_texture(ch_inst.name)
+		if tex != null:
+			TCGArt.draw_texture_cover(c, tex, cr.grow(-4.0), Color.WHITE, 0.16)
+		var name_bar := Rect2(cr.position.x + 4.0, cr.end.y - 34.0, cr.size.x - 8.0, 30.0)
+		c.draw_rect(name_bar, Color(0.04, 0.06, 0.10, 0.86))
+		TCGTheme.draw_text_centered(c, ch_inst.name, name_bar.get_center(), 14, TCGTheme.GOLD_L, true, true)
+		if not elem.is_empty():
+			TCGArt.draw_elem_symbol(c, elem, Vector2(cr.position.x + 20.0, cr.position.y + 20.0), 10.5, Color(0, 0, 0, 0), true)
+
+	# Right team (Opponent) sliding in from right
+	var right_x0: float = cx + 96.0 + (1.0 - slide_u) * 140.0
+	TCGTheme.draw_text_centered(c, _who(1 - view_player).to_upper(), Vector2(right_x0 + team_w * 0.5, cy - ch * 0.5 - 24.0), 17, TCGTheme.GOLD_L, true, true)
+	for i in range(mini(3, p_foe.characters.size())):
+		var ch_inst: TCGPlayerSystem.CharacterInstance = p_foe.characters[i]
+		var cd: CardDataSystem.CharData = ch_inst.get_defn()
+		var elem: String = cd.element if cd != null else ""
+		var cr := Rect2(right_x0 + float(i) * (cw + gap), cy - ch * 0.5, cw, ch)
+		TCGTheme.draw_gold_frame(c, cr, TCGTheme.PANEL, 12, false)
+		var tex := TCGArt.get_character_texture(ch_inst.name)
+		if tex != null:
+			TCGArt.draw_texture_cover(c, tex, cr.grow(-4.0), Color.WHITE, 0.16)
+		var name_bar := Rect2(cr.position.x + 4.0, cr.end.y - 34.0, cr.size.x - 8.0, 30.0)
+		c.draw_rect(name_bar, Color(0.04, 0.06, 0.10, 0.86))
+		TCGTheme.draw_text_centered(c, ch_inst.name, name_bar.get_center(), 14, TCGTheme.GOLD_L, true, true)
+		if not elem.is_empty():
+			TCGArt.draw_elem_symbol(c, elem, Vector2(cr.end.x - 20.0, cr.position.y + 20.0), 10.5, Color(0, 0, 0, 0), true)
+
+	# Center glowing golden VS diamond emblem
+	var vs_c := Vector2(cx, cy)
+	var pulse := 0.5 + 0.5 * sin(_clock * 5.0)
+	c.draw_circle(vs_c, 58.0 + pulse * 4.0, Color(1.0, 0.86, 0.45, 0.16))
+	var dm := 48.0
+	var d_pts := PackedVector2Array([
+		vs_c + Vector2(0, -dm), vs_c + Vector2(dm, 0), vs_c + Vector2(0, dm), vs_c + Vector2(-dm, 0)
+	])
+	c.draw_colored_polygon(d_pts, Color(0.07, 0.10, 0.16, 0.96))
+	var d_rim := d_pts.duplicate()
+	d_rim.append(d_pts[0])
+	c.draw_polyline(d_rim, TCGTheme.GOLD_L, 2.8, true)
+	TCGTheme.draw_text_centered(c, "VS", vs_c, 36, TCGTheme.GOLD_L, true, true)
+
+	# Bottom turn-order reveal banner
+	var spinning: bool = _intro_t < 0.95
 	var fp: int = game_state.first_player
-	var coin_col := TCGTheme.GOLD_L if (fp == 0 or spinning) else TCGTheme.TEAL
-	c.draw_colored_polygon(pts, coin_col)
-	var rim := pts.duplicate()
-	rim.append(pts[0])
-	c.draw_polyline(rim, TCGTheme.GOLD, 3.0)
-	if not spinning:
-		TCGTheme.draw_text_centered(c, "I" if fp == 0 else "II", Vector2(cx, cy), 34, TCGTheme.PANEL2, true, false)
 	var who_fp: String = _who(fp)
-	var first_txt: String = "You go first!" if who_fp == "You" else ("%s goes first!" % who_fp)
-	var title: String = "Flipping Coin…" if spinning else first_txt
-	TCGTheme.draw_text_centered(c, title, Vector2(cx, panel.position.y + 170.0), 26, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(c, "Click or press Space to continue" if not spinning else "Determining Turn Order", Vector2(cx, panel.position.y + 210.0), 16, TCGTheme.DIM, false, true)
+	var first_txt: String = "You start first!" if who_fp == "You" else ("%s starts first!" % who_fp)
+	var title: String = "Determining Turn Order…" if spinning else first_txt
+	TCGTheme.draw_phase_announcement(c, title, "Click or press Space to begin" if not spinning else "", TCGTheme.GOLD_L, cy + 236.0, 1.0)
 
 
 func _draw_hotseat_cover(c: CanvasItem, w: float, h: float) -> void:

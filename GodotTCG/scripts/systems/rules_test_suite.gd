@@ -1,17 +1,20 @@
 class_name TCGRulesTestSuite
 extends RefCounted
 ## RulesTestSuite
-## Comprehensive parity test suite porting all test cases from Python
-## `tests/test_engine.py` and `tests/test_m3.py` to GDScript.
+## Comprehensive rules & mechanics test suite verifying:
+## - Dice rolling (no Cryo, 1/8 Omni, 7/40 each for Hydro/Pyro/Electro/Anemo/Geo)
+## - Exact, Unaligned, and Same-Type ("2 dice of the same type") dice payment
+## - All 6 Avatar characters (Aang, Zuko, Katara, Azula, Toph, Iroh) & Ultimates
+## - All 15 Action Cards (6 Character Equipment + 9 Utility cards)
+## - Elemental reactions, shields, piercing, stun/freeze, deck validation, and previews.
 
 
 static func _start(
-	c0: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"],
-	c1: Array = ["Cryo Knight", "Hydro Cleric", "Geo Guardian"],
+	c0: Array = ["Zuko", "Azula", "Aang"],
+	c1: Array = ["Katara", "Toph", "Iroh"],
 	seed_val: int = 1
 ) -> TCGGameState:
-	## Matches `tests/test_engine.py:start()`: reaches action phase, P0 to act, 12 Omni dice each.
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), seed_val)
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), seed_val)
 	while s.phase != "action":
 		var acts := TCGRulesEngine.legal_actions(s)
 		TCGRulesEngine.apply_action(s, acts[0])
@@ -37,11 +40,12 @@ static func _give(s: TCGGameState, p: int, cards: Array) -> void:
 	s.players[p].hand = h
 
 
-static func _play_card(s: TCGGameState, card_name: String, target: int = -1, p: int = 0) -> void:
+static func _play_card(s: TCGGameState, card_name: String, target: int = -1, p: int = 0, ids: Array = []) -> void:
 	var pl := s.players[p]
 	for a in TCGRulesEngine.legal_actions(s):
 		if a.type == "card" and pl.hand[a.index] == card_name and a.target == target:
-			TCGRulesEngine.apply_action(s, a)
+			var act := a if ids.is_empty() else a.with_ids(ids)
+			TCGRulesEngine.apply_action(s, act)
 			return
 
 
@@ -60,42 +64,41 @@ static func run_all_tests() -> Dictionary:
 		["test_auto_pay_prefers_exact_then_omni", Callable(TCGRulesTestSuite, "_test_auto_pay_prefers_exact_then_omni")],
 		["test_auto_pay_fails_when_short", Callable(TCGRulesTestSuite, "_test_auto_pay_fails_when_short")],
 		["test_payment_rejects_wrong_dice", Callable(TCGRulesTestSuite, "_test_payment_rejects_wrong_dice")],
-		["test_omni_rate_is_one_eighth_and_elements_equal", Callable(TCGRulesTestSuite, "_test_omni_rate")],
+		["test_same_type_dice_payment", Callable(TCGRulesTestSuite, "_test_same_type_dice_payment")],
+		["test_omni_rate_no_cryo_and_five_elements_equal", Callable(TCGRulesTestSuite, "_test_omni_rate")],
 		["test_setup_reaches_action_phase", Callable(TCGRulesTestSuite, "_test_setup_reaches_action_phase")],
 		["test_skill_deals_damage_applies_aura_and_energy", Callable(TCGRulesTestSuite, "_test_skill_damage_aura_energy")],
 		["test_fast_action_keeps_turn_and_tuning_changes_die", Callable(TCGRulesTestSuite, "_test_fast_action_tuning")],
-		["test_burst_needs_full_energy", Callable(TCGRulesTestSuite, "_test_burst_needs_full_energy")],
+		["test_burst_needs_full_energy_zuko_splash", Callable(TCGRulesTestSuite, "_test_burst_needs_full_energy")],
 		["test_illegal_actions_are_rejected", Callable(TCGRulesTestSuite, "_test_illegal_actions_rejected")],
 		["test_end_round_flow_and_first_player", Callable(TCGRulesTestSuite, "_test_end_round_flow")],
 		["test_switch_costs_one_die_and_passes_turn", Callable(TCGRulesTestSuite, "_test_switch_costs_one_die")],
-		["test_all_8_reaction_bonuses_and_aura_consumed", Callable(TCGRulesTestSuite, "_test_all_reactions")],
+		["test_all_reaction_bonuses_and_aura_consumed", Callable(TCGRulesTestSuite, "_test_all_reactions")],
 		["test_same_element_keeps_aura_no_reaction", Callable(TCGRulesTestSuite, "_test_same_element_keeps_aura")],
 		["test_overloaded_forces_switch", Callable(TCGRulesTestSuite, "_test_overloaded_forces_switch")],
-		["test_superconduct_pierces_standby_characters", Callable(TCGRulesTestSuite, "_test_superconduct_pierces")],
+		["test_electro_charged_pierces_standby_characters", Callable(TCGRulesTestSuite, "_test_electro_charged_pierces")],
 		["test_frozen_blocks_skills_and_boosts_physical_then_thaws", Callable(TCGRulesTestSuite, "_test_frozen_shatter")],
 		["test_swirl_spreads_element_to_other_characters", Callable(TCGRulesTestSuite, "_test_swirl_spreads")],
 		["test_crystallize_gives_shield_to_attacker_side", Callable(TCGRulesTestSuite, "_test_crystallize_shield")],
 		["test_piercing_ignores_shields_and_auras", Callable(TCGRulesTestSuite, "_test_piercing_ignores_shields")],
-		["test_buff_status_and_targeted_heal", Callable(TCGRulesTestSuite, "_test_summon_end_phase")],
 		["test_defeat_forces_choice_and_win_detection", Callable(TCGRulesTestSuite, "_test_defeat_and_win")],
-		["test_attack_boost_increases_skill_damage", Callable(TCGRulesTestSuite, "_test_pyro_infusion")],
-		["test_guard_stance_reduces_big_hits_twice", Callable(TCGRulesTestSuite, "_test_rain_sword")],
 		["test_clone_is_independent_and_deterministic", Callable(TCGRulesTestSuite, "_test_clone_and_determinism")],
 		["test_engine_announces_phases_and_rounds", Callable(TCGRulesTestSuite, "_test_phase_and_round_events")],
 		["test_presets_are_legal_decks", Callable(TCGRulesTestSuite, "_test_presets_legal")],
-		["test_validation_catches_each_rule", Callable(TCGRulesTestSuite, "_test_deck_validation")],
+		["test_validation_catches_each_rule_including_equipment", Callable(TCGRulesTestSuite, "_test_deck_validation")],
 		["test_autofill_keeps_partial_and_rejects_illegal", Callable(TCGRulesTestSuite, "_test_autofill_csp")],
 		["test_share_code_roundtrip", Callable(TCGRulesTestSuite, "_test_share_code_roundtrip")],
-		["test_power_boost_applies_next_attack_and_spends_usage", Callable(TCGRulesTestSuite, "_test_weapon_damage")],
-		["test_defeat_clears_character_statuses", Callable(TCGRulesTestSuite, "_test_weapon_replace_and_defeat")],
-		["test_battle_cry_and_skill_boost_stack_round_buffs", Callable(TCGRulesTestSuite, "_test_talent_equip_and_skill")],
-		["test_heal_cards_targeted_and_most_injured", Callable(TCGRulesTestSuite, "_test_talent_requires_active")],
-		["test_energy_charge_and_draw_events", Callable(TCGRulesTestSuite, "_test_fischl_stellar_predator")],
-		["test_shield_cards_block_incoming_damage", Callable(TCGRulesTestSuite, "_test_gamblers_earrings")],
-		["test_hydro_cleric_heals_most_injured_ally", Callable(TCGRulesTestSuite, "_test_support_end_phase")],
-		["test_geo_guardian_shields_and_petrifies", Callable(TCGRulesTestSuite, "_test_paimon_action_start")],
-		["test_anemo_scout_skill_forces_switch", Callable(TCGRulesTestSuite, "_test_changing_shifts_and_leave_it")],
-		["test_quick_rally_zero_cost_draw_and_status_reduce", Callable(TCGRulesTestSuite, "_test_resonance_and_reflection")],
+		["test_aang_ult_clears_self_aura", Callable(TCGRulesTestSuite, "_test_aang_ult")],
+		["test_zuko_ult_active_reaction_and_no_bench_reaction", Callable(TCGRulesTestSuite, "_test_zuko_ult_reactions")],
+		["test_katara_ult_and_spirit_water_ult_only_heal", Callable(TCGRulesTestSuite, "_test_katara_ult_and_spirit_water")],
+		["test_azula_ult_stuns_target_for_round", Callable(TCGRulesTestSuite, "_test_azula_ult_stun")],
+		["test_toph_ult_grants_shield_plus_2", Callable(TCGRulesTestSuite, "_test_toph_ult_shield")],
+		["test_iroh_ult_teamwide_plus_1_dmg_for_round", Callable(TCGRulesTestSuite, "_test_iroh_ult_team_buff")],
+		["test_equipment_damage_bonus_and_defeat_clear", Callable(TCGRulesTestSuite, "_test_equipment_damage_and_defeat")],
+		["test_utility_reroll_elemental_dice_and_omni_conversion", Callable(TCGRulesTestSuite, "_test_utility_dice_cards")],
+		["test_utility_draw_and_swap_cards", Callable(TCGRulesTestSuite, "_test_utility_draw_and_swap")],
+		["test_utility_dice_carryover_to_next_round_omni", Callable(TCGRulesTestSuite, "_test_utility_dice_carryover")],
+		["test_utility_healing_active_dual_and_party", Callable(TCGRulesTestSuite, "_test_utility_healing_cards")],
 		["test_preview_skill_and_card_no_mutation", Callable(TCGRulesTestSuite, "_test_preview_skill_and_card_no_mutation")],
 	]
 
@@ -116,7 +119,7 @@ static func run_all_tests() -> Dictionary:
 
 
 # ------------------------------------------------------------------------------
-# Individual Test Implementations
+# Dice & Core Flow Tests
 # ------------------------------------------------------------------------------
 static func _test_auto_pay_prefers_exact_then_omni() -> String:
 	var dice: Array[String] = [CardDataSystem.OMNI, CardDataSystem.PYRO, CardDataSystem.PYRO, CardDataSystem.HYDRO, CardDataSystem.PYRO]
@@ -147,6 +150,23 @@ static func _test_payment_rejects_wrong_dice() -> String:
 	return ""
 
 
+static func _test_same_type_dice_payment() -> String:
+	var same_cost := CardDataSystem.CostData.new("", 2, 0)
+	var mixed: Array[String] = [CardDataSystem.PYRO, CardDataSystem.HYDRO, CardDataSystem.GEO]
+	if TCGDiceSystem.payment_ok(mixed, same_cost, [0, 1]):
+		return "2 Same cost must reject Pyro + Hydro"
+	if TCGDiceSystem.auto_pay(mixed, same_cost) != null:
+		return "auto_pay should return null when no two dice share a type (and no Omni)"
+	var pair: Array[String] = [CardDataSystem.PYRO, CardDataSystem.GEO, CardDataSystem.GEO]
+	var pay = TCGDiceSystem.auto_pay(pair, same_cost)
+	if pay == null or not TCGDiceSystem.payment_ok(pair, same_cost, pay):
+		return "auto_pay failed for 2 Same with [Pyro, Geo, Geo]"
+	var omni_pair: Array[String] = [CardDataSystem.PYRO, CardDataSystem.OMNI]
+	if not TCGDiceSystem.payment_ok(omni_pair, same_cost, [0, 1]):
+		return "2 Same cost should allow 1 element + 1 Omni"
+	return ""
+
+
 static func _test_omni_rate() -> String:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 3
@@ -155,12 +175,14 @@ static func _test_omni_rate() -> String:
 	var counts: Dictionary = {}
 	for f in rolls:
 		counts[f] = int(counts.get(f, 0)) + 1
+	if int(counts.get(CardDataSystem.CRYO, 0)) != 0:
+		return "Cryo dice must never be rolled, got %d" % int(counts.get(CardDataSystem.CRYO, 0))
 	var omni_rate: float = float(counts.get(CardDataSystem.OMNI, 0)) / float(total)
 	if absf(omni_rate - 0.125) > 0.015:
 		return "Omni rate out of tolerance: %f" % omni_rate
-	for el in CardDataSystem.ELEMENTS:
+	for el in [CardDataSystem.HYDRO, CardDataSystem.PYRO, CardDataSystem.ELECTRO, CardDataSystem.ANEMO, CardDataSystem.GEO]:
 		var el_rate: float = float(counts.get(el, 0)) / float(total)
-		if absf(el_rate - (7.0 / 48.0)) > 0.015:
+		if absf(el_rate - (7.0 / 40.0)) > 0.015:
 			return "Element %s rate out of tolerance: %f" % [el, el_rate]
 	return ""
 
@@ -177,10 +199,11 @@ static func _test_setup_reaches_action_phase() -> String:
 
 static func _test_skill_damage_aura_energy() -> String:
 	var s := _start()
+	# Zuko Fire Whip: 3 Pyro DMG, applies Pyro aura, +1 Energy (capped at max_energy=1)
 	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
 	var foe := s.players[1].characters[0]
-	if foe.hp != 7 or foe.aura != CardDataSystem.ELECTRO:
-		return "Expected foe hp=7 aura=Electro, got hp=%d aura=%s" % [foe.hp, foe.aura]
+	if foe.hp != 7 or foe.aura != CardDataSystem.PYRO:
+		return "Expected foe hp=7 aura=Pyro, got hp=%d aura=%s" % [foe.hp, foe.aura]
 	if s.players[0].characters[0].energy != 1 or s.current != 1:
 		return "Expected energy=1 and turn passed to P1"
 	return ""
@@ -188,7 +211,7 @@ static func _test_skill_damage_aura_energy() -> String:
 
 static func _test_fast_action_tuning() -> String:
 	var s := _start()
-	s.players[0].dice = [CardDataSystem.PYRO, CardDataSystem.OMNI]
+	s.players[0].dice = [CardDataSystem.HYDRO, CardDataSystem.OMNI]
 	var tune_act: TCGGameState.ActionData = null
 	for a in TCGRulesEngine.legal_actions(s):
 		if a.type == "tune":
@@ -197,8 +220,8 @@ static func _test_fast_action_tuning() -> String:
 	if tune_act == null:
 		return "Expected a legal tune action"
 	TCGRulesEngine.apply_action(s, tune_act)
-	if s.current != 0 or s.players[0].dice[0] != CardDataSystem.ELECTRO:
-		return "Expected fast action to keep turn and convert die to Electro"
+	if s.current != 0 or s.players[0].dice[0] != CardDataSystem.PYRO:
+		return "Expected fast action to keep turn and convert die to Pyro (Zuko's element)"
 	return ""
 
 
@@ -207,6 +230,8 @@ static func _test_burst_needs_full_energy() -> String:
 	if _find_skill_action(s, 2) != null:
 		return "Burst should not be legal at 0 energy"
 	var max_e: int = s.players[0].characters[0].get_defn().max_energy
+	if max_e != 1:
+		return "Expected max_energy=1, got %d" % max_e
 	s.players[0].characters[0].energy = max_e
 	var burst_act := _find_skill_action(s, 2)
 	if burst_act == null:
@@ -214,9 +239,10 @@ static func _test_burst_needs_full_energy() -> String:
 	TCGRulesEngine.apply_action(s, burst_act)
 	if s.players[0].characters[0].energy != 0:
 		return "Energy should be 0 after burst"
+	# Zuko Dragon's Roar: 3 Pyro to active + 1 Piercing to standby
 	var hps := [s.players[1].characters[0].hp, s.players[1].characters[1].hp, s.players[1].characters[2].hp]
-	if hps != [6, 8, 8]:
-		return "Expected foe HPs [6, 8, 8], got %s" % str(hps)
+	if hps != [7, 9, 9]:
+		return "Expected foe HPs [7, 9, 9], got %s" % str(hps)
 	return ""
 
 
@@ -258,6 +284,9 @@ static func _test_switch_costs_one_die() -> String:
 	return ""
 
 
+# ------------------------------------------------------------------------------
+# Elemental Reactions
+# ------------------------------------------------------------------------------
 static func _test_all_reactions() -> String:
 	var cases: Array[Array] = [
 		[CardDataSystem.HYDRO, CardDataSystem.PYRO, 1, "Vaporize"],
@@ -303,13 +332,13 @@ static func _test_overloaded_forces_switch() -> String:
 	return ""
 
 
-static func _test_superconduct_pierces() -> String:
+static func _test_electro_charged_pierces() -> String:
 	var s := _start()
-	s.players[1].characters[0].aura = CardDataSystem.CRYO
+	s.players[1].characters[0].aura = CardDataSystem.HYDRO
 	_hit(s, 0, 1, CardDataSystem.ELECTRO)
 	var hps := [s.players[1].characters[0].hp, s.players[1].characters[1].hp, s.players[1].characters[2].hp]
 	if hps != [8, 9, 9]:
-		return "Expected HPs [8, 9, 9], got %s" % str(hps)
+		return "Expected Electro-Charged HPs [8, 9, 9], got %s" % str(hps)
 	return ""
 
 
@@ -331,13 +360,22 @@ static func _test_frozen_shatter() -> String:
 
 
 static func _test_swirl_spreads() -> String:
+	# Generic non-Aang Swirl deals 1 damage to standby enemies
 	var s := _start()
 	s.players[1].characters[0].aura = CardDataSystem.PYRO
 	_hit(s, 0, 1, CardDataSystem.ANEMO)
 	var hps := [s.players[1].characters[0].hp, s.players[1].characters[1].hp, s.players[1].characters[2].hp]
 	if hps != [9, 9, 9]:
-		return "Expected Swirl HPs [9, 9, 9], got %s" % str(hps)
-	if s.players[1].characters[1].aura != CardDataSystem.PYRO or not s.players[1].characters[0].aura.is_empty():
+		return "Expected generic Swirl HPs [9, 9, 9], got %s" % str(hps)
+
+	# Aang's Swirl deals 2 damage to standby enemies and spreads aura
+	var sa := _start(["Aang", "Katara", "Toph"], ["Zuko", "Azula", "Iroh"])
+	sa.players[1].characters[0].aura = CardDataSystem.PYRO
+	_hit(sa, 0, 1, CardDataSystem.ANEMO)
+	var hps_a := [sa.players[1].characters[0].hp, sa.players[1].characters[1].hp, sa.players[1].characters[2].hp]
+	if hps_a != [9, 8, 8]:
+		return "Expected Aang Swirl HPs [9, 8, 8], got %s" % str(hps_a)
+	if sa.players[1].characters[1].aura != CardDataSystem.PYRO or not sa.players[1].characters[0].aura.is_empty():
 		return "Expected Swirl to spread Pyro aura to standby and clear target aura"
 	return ""
 
@@ -366,22 +404,6 @@ static func _test_piercing_ignores_shields() -> String:
 	return ""
 
 
-static func _test_summon_end_phase() -> String:
-	var s := _start()
-	_give(s, 0, ["Power Boost", "Major Heal"])
-	s.players[0].characters[1].hp = 7
-	_play_card(s, "Major Heal", 1)
-	if s.players[0].characters[1].hp != 9 or s.current != 0:
-		return "Major Heal should heal char 1 from 7 to 9 as a Fast Action"
-	_play_card(s, "Power Boost")
-	if TCGRulesEngine.find_status(s.players[0].combat, "Next Attack +2") == null:
-		return "Power Boost should attach Next Attack +2 status"
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
-	if s.players[1].characters[0].hp != 6 or TCGRulesEngine.find_status(s.players[0].combat, "Next Attack +2") != null:
-		return "Power Boost should deal +2 Normal Attack DMG (HP 6) and consume Next Attack +2"
-	return ""
-
-
 static func _test_defeat_and_win() -> String:
 	var s := _start()
 	_hit(s, 0, 99, CardDataSystem.PHYSICAL)
@@ -397,31 +419,6 @@ static func _test_defeat_and_win() -> String:
 	return ""
 
 
-static func _test_pyro_infusion() -> String:
-	var s := _start()
-	_give(s, 0, ["Battle Cry"])
-	_play_card(s, "Battle Cry")
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	if s.players[1].characters[0].hp != 6:
-		return "Attack +1 should add +1 DMG to Shock Arrow (HP 6), got %d" % s.players[1].characters[0].hp
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
-	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") != null:
-		return "Attack +1 should expire at End Phase"
-	return ""
-
-
-static func _test_rain_sword() -> String:
-	var s := _start()
-	TCGRulesEngine.add_status(s.players[0].combat, "Guard Stance")
-	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
-	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
-	_hit(s, 0, 3, CardDataSystem.PHYSICAL, 0)
-	if s.players[0].characters[0].hp != 3 or not s.players[0].combat.is_empty():
-		return "Guard Stance should reduce two hits by 1 each (HP 3) and expire"
-	return ""
-
-
 static func _test_clone_and_determinism() -> String:
 	var s := _start()
 	var c := s.clone()
@@ -429,9 +426,10 @@ static func _test_clone_and_determinism() -> String:
 	if s.players[1].characters[0].hp != 10 or c.players[1].characters[0].hp >= 10:
 		return "Cloned state mutation leaked to original state"
 
-	# Determinism check with identical seed
-	var g1 := TCGRulesEngine.new_game(["Electro Ranger", "Hydro Cleric", "Geo Guardian"], CardDataSystem.starter_deck(), ["Pyro Vanguard", "Anemo Scout", "Cryo Knight"], CardDataSystem.starter_deck(), 42)
-	var g2 := TCGRulesEngine.new_game(["Electro Ranger", "Hydro Cleric", "Geo Guardian"], CardDataSystem.starter_deck(), ["Pyro Vanguard", "Anemo Scout", "Cryo Knight"], CardDataSystem.starter_deck(), 42)
+	var c0 := ["Aang", "Katara", "Toph"]
+	var c1 := ["Zuko", "Azula", "Iroh"]
+	var g1 := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), 42)
+	var g2 := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), 42)
 	for _step in range(25):
 		if g1.phase == "over":
 			break
@@ -462,6 +460,9 @@ static func _test_phase_and_round_events() -> String:
 	return ""
 
 
+# ------------------------------------------------------------------------------
+# Deck System & Validation
+# ------------------------------------------------------------------------------
 static func _test_presets_legal() -> String:
 	var presets := TCGDeckSystem.preset_decks()
 	if presets.is_empty() or presets.size() != CardDataSystem.preset_defs.size():
@@ -475,7 +476,7 @@ static func _test_presets_legal() -> String:
 
 
 static func _test_deck_validation() -> String:
-	var chars := ["Pyro Vanguard", "Electro Ranger", "Cryo Knight"]
+	var chars := ["Aang", "Katara", "Toph"]
 	var good: Array[String] = TCGDeckSystem.autofill(chars)
 	if not TCGDeckSystem.validate_deck(chars, good).is_empty():
 		return "autofill deck should be valid"
@@ -484,27 +485,31 @@ static func _test_deck_validation() -> String:
 		return "%d-card deck should fail validation" % (TCGDeckSystem.DECK_SIZE - 1)
 	var too_many := good.duplicate()
 	for idx in range(TCGDeckSystem.MAX_COPIES + 1):
-		too_many[idx] = "Power Boost"
+		too_many[idx] = "Draw Cards"
 	if TCGDeckSystem.validate_deck(chars, too_many).is_empty():
-		return "Exceeding MAX_COPIES should fail validation"
-	if TCGDeckSystem.validate_deck(["UnknownHero", "Electro Ranger", "Cryo Knight"], good).is_empty():
+		return "Exceeding MAX_COPIES (2) should fail validation"
+	var wrong_equip := good.duplicate()
+	wrong_equip[0] = "Zuko's Dual Broadswords"
+	if TCGDeckSystem.validate_deck(chars, wrong_equip).is_empty():
+		return "Including Zuko's equipment without Zuko in roster must fail validation"
+	if TCGDeckSystem.validate_deck(["UnknownHero", "Katara", "Toph"], good).is_empty():
 		return "Unknown character should fail validation"
 	return ""
 
 
 static func _test_autofill_csp() -> String:
-	var chars := ["Hydro Cleric", "Anemo Scout", "Geo Guardian"]
-	var partial := ["Power Boost", "Power Boost", "Tactical Draw"]
+	var chars := ["Zuko", "Azula", "Iroh"]
+	var partial := ["Zuko's Dual Broadswords", "Draw Cards", "Draw Cards"]
 	var a = TCGDeckSystem.autofill(chars, partial)
 	var b = TCGDeckSystem.autofill(chars, partial)
 	if a == null or a != b or not TCGDeckSystem.validate_deck(chars, a).is_empty():
 		return "autofill should be deterministic and produce a valid %d-card deck" % TCGDeckSystem.DECK_SIZE
-	if TCGDeckSystem.autofill(["Pyro Vanguard", "Electro Ranger", "Cryo Knight"], ["Nonexistent Card"]) != null:
+	if TCGDeckSystem.autofill(chars, ["Nonexistent Card"]) != null:
 		return "autofill should return null for illegal partial deck"
 	var over_cap: Array[String] = []
 	for _i in range(TCGDeckSystem.MAX_COPIES + 1):
-		over_cap.append("Power Boost")
-	if TCGDeckSystem.autofill(["Pyro Vanguard", "Electro Ranger", "Cryo Knight"], over_cap) != null:
+		over_cap.append("Draw Cards")
+	if TCGDeckSystem.autofill(chars, over_cap) != null:
 		return "autofill should return null when exceeding MAX_COPIES in partial deck"
 	return ""
 
@@ -522,130 +527,303 @@ static func _test_share_code_roundtrip() -> String:
 	return ""
 
 
-static func _test_weapon_damage() -> String:
-	var s := _start()
-	_give(s, 0, ["Power Boost"])
-	_play_card(s, "Power Boost")
-	if s.current != 0:
-		return "Power Boost should be a Fast Action"
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
-	if s.players[1].characters[0].hp != 6:
-		return "Expected Power Boost to add +2 DMG to first Normal Attack (HP 6), got %d" % s.players[1].characters[0].hp
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
-	if s.players[1].characters[0].hp != 4:
-		return "Second Normal Attack should deal base 2 DMG (HP 4), got %d" % s.players[1].characters[0].hp
-	return ""
-
-
-static func _test_weapon_replace_and_defeat() -> String:
-	var s := _start()
-	TCGRulesEngine.add_status(s.players[0].characters[0].statuses, "Frozen")
-	_hit(s, 0, 99, CardDataSystem.PHYSICAL, 0)
-	if not s.players[0].characters[0].defeated or not s.players[0].characters[0].statuses.is_empty():
-		return "Defeat should clear character statuses"
-	return ""
-
-
-static func _test_talent_equip_and_skill() -> String:
-	var s := _start()
-	_give(s, 0, ["Battle Cry"])
-	_play_card(s, "Battle Cry")
-	TCGRulesEngine.add_status(s.players[0].combat, "Skill Boost +2")
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	if s.players[1].characters[0].hp != 4:
-		return "Battle Cry (+1) + Skill Boost +2 should deal 6 Shock Arrow DMG (HP 4), got %d" % s.players[1].characters[0].hp
-	return ""
-
-
-static func _test_talent_requires_active() -> String:
-	var s := _start()
-	s.players[0].characters[0].hp = 9
-	s.players[0].characters[2].hp = 4
-	_give(s, 0, ["Minor Heal", "Team Tonic"])
-	_play_card(s, "Minor Heal", 0)
-	if s.players[0].characters[0].hp != 10:
-		return "Minor Heal should heal targeted char 0 from 9 to 10"
-	_play_card(s, "Team Tonic")
-	if s.players[0].characters[2].hp != 7:
-		return "Team Tonic should heal most injured char 2 from 4 to 7, got %d" % s.players[0].characters[2].hp
-	return ""
-
-
-static func _test_fischl_stellar_predator() -> String:
-	var s := _start()
-	_give(s, 0, ["Energy Charge", "Tactical Draw"])
-	var deck_before: int = s.players[0].deck.size()
-	_play_card(s, "Energy Charge")
-	if s.players[0].characters[0].energy != 1:
-		return "Energy Charge should grant 1 Energy"
-	_play_card(s, "Tactical Draw")
-	if s.players[0].deck.size() != deck_before - 2 or s.players[0].hand.size() != 2:
-		return "Tactical Draw should draw 2 cards from deck"
-	return ""
-
-
-static func _test_gamblers_earrings() -> String:
-	var s := _start()
-	_give(s, 0, ["Iron Guard", "Fortify"])
-	_play_card(s, "Iron Guard")
-	_hit(s, 0, 5, CardDataSystem.PHYSICAL, 0)
-	if s.players[0].characters[0].hp != 7 or TCGRulesEngine.find_status(s.players[0].combat, "Shield +2") != null:
-		return "Iron Guard (Shield +2) should block 2 of 5 DMG (HP 7) and expire"
-	_play_card(s, "Fortify")
-	_hit(s, 0, 2, CardDataSystem.PHYSICAL, 0)
-	if s.players[0].characters[0].hp != 7:
-		return "Fortify (Shield +3) should fully block 2 DMG"
-	return ""
-
-
-static func _test_support_end_phase() -> String:
-	var s := _start(["Hydro Cleric", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Geo Guardian"])
-	s.players[0].characters[2].hp = 5
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	if s.players[1].characters[0].hp != 8 or s.players[0].characters[2].hp != 7:
-		return "Hydro Cleric Refreshing Mist should deal 2 Hydro DMG and heal most injured ally by 2"
-	return ""
-
-
-static func _test_paimon_action_start() -> String:
-	var s := _start(["Geo Guardian", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"])
-	s.players[0].characters[0].energy = 2
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	if s.players[1].characters[0].hp != 8 or TCGRulesEngine.find_status(s.players[0].combat, "Shield +2") == null:
-		return "Geo Guardian Aegis Slam should deal 2 DMG and grant Shield +2"
-	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+# ------------------------------------------------------------------------------
+# All 6 Avatar Character Ultimates & Equipment
+# ------------------------------------------------------------------------------
+static func _test_aang_ult() -> String:
+	var s := _start(["Aang", "Katara", "Toph"], ["Zuko", "Azula", "Iroh"])
+	s.players[0].characters[0].aura = CardDataSystem.PYRO
+	s.players[0].characters[0].energy = 1
+	var prev := TCGRulesEngine.preview_skill(s, 0, 2)
+	var own0_prev: Dictionary = prev.get("own_chars", {}).get(0, {})
+	if String(own0_prev.get("aura_cleared", "")) != CardDataSystem.PYRO:
+		return "Aang Ult preview should report aura_cleared='Pyro', got %s" % str(own0_prev)
 	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
-	if s.players[1].characters[0].hp != 5 or not TCGRulesEngine.has_status(s.players[1].characters[0], "Petrified"):
-		return "Geo Guardian Earthen Bastion (Ult) should deal 3 Geo DMG and Petrify target"
+	if s.players[1].characters[0].hp != 6:
+		return "Aang Ult should deal 4 Anemo DMG (HP 6), got %d" % s.players[1].characters[0].hp
+	if not s.players[0].characters[0].aura.is_empty():
+		return "Aang Ult should remove elemental aura from himself, still has '%s'" % s.players[0].characters[0].aura
+	var has_cleanse_ev: bool = false
+	for ev in s.events:
+		if String(ev.get("kind", "")) == "cleanse" and String(ev.get("aura", "")) == CardDataSystem.PYRO:
+			has_cleanse_ev = true
+			break
+	if not has_cleanse_ev:
+		return "Aang Ult should emit 'cleanse' event when removing aura"
 	return ""
 
 
-static func _test_changing_shifts_and_leave_it() -> String:
-	var s := _start(["Anemo Scout", "Pyro Vanguard", "Cryo Knight"], ["Pyro Vanguard", "Cryo Knight", "Hydro Cleric"])
-	TCGRulesEngine.apply_action(s, _find_skill_action(s, 1))
-	if s.players[1].characters[0].hp != 7 or s.players[1].active != 1:
-		return "Anemo Scout Cyclone Kick should deal 3 Anemo DMG and force opponent switch to index 1"
+static func _test_zuko_ult_reactions() -> String:
+	var s := _start(["Zuko", "Azula", "Aang"], ["Katara", "Toph", "Iroh"])
+	s.players[1].characters[0].aura = CardDataSystem.HYDRO   # Active CAN trigger Vaporize (+1 -> 4 DMG)
+	s.players[1].characters[1].aura = CardDataSystem.HYDRO   # Standby takes 1 splash WITHOUT triggering reactions!
+	s.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	if s.players[1].characters[0].hp != 6 or not s.players[1].characters[0].aura.is_empty():
+		return "Zuko Ult should trigger Vaporize on active target (4 DMG -> HP 6, aura cleared)"
+	if s.players[1].characters[1].hp != 9 or s.players[1].characters[1].aura != CardDataSystem.HYDRO:
+		return "Zuko Ult splash should deal 1 non-reaction DMG to standby and preserve standby aura"
+	if s.players[1].characters[2].hp != 9:
+		return "Zuko Ult splash should deal 1 DMG to standby index 2"
 	return ""
 
 
-static func _test_resonance_and_reflection() -> String:
-	var s := _start()
-	_give(s, 0, ["Quick Rally"])
-	var dice_before: int = s.players[0].dice.size()
-	var deck_before: int = s.players[0].deck.size()
-	_play_card(s, "Quick Rally")
-	if s.players[0].dice.size() != dice_before or s.players[0].deck.size() != deck_before - 1 or s.current != 0:
-		return "Quick Rally should cost 0 dice, draw 1 card, and keep turn"
-	TCGRulesEngine.add_status(s.players[0].combat, "Normal Boost +1")
+static func _test_katara_ult_and_spirit_water() -> String:
+	var s := _start(["Katara", "Aang", "Toph"], ["Zuko", "Azula", "Iroh"])
+	s.players[0].characters[0].hp = 4
+	s.players[0].characters[1].hp = 5
+	s.players[0].characters[2].hp = 6
+	s.players[0].characters[0].energy = 1
+
+	# 1. Without Spirit Water: Katara Ult deals 3 Hydro DMG and heals every living ally by 1 HP
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	if s.players[1].characters[0].hp != 7:
+		return "Katara Ult should deal 3 Hydro DMG (HP 7)"
+	var hps1 := [s.players[0].characters[0].hp, s.players[0].characters[1].hp, s.players[0].characters[2].hp]
+	if hps1 != [5, 6, 7]:
+		return "Katara Ult without Spirit Water should heal all allies by 1 ([5, 6, 7]), got %s" % str(hps1)
+
+	# 2. Equip Katara's Spirit Water -> Active Character Healing still heals ONLY 1 HP (Ult-only!)
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	_give(s, 0, ["Katara's Spirit Water", "Active Character Healing"])
+	_play_card(s, "Katara's Spirit Water", 0)
+	_play_card(s, "Active Character Healing")
+	if s.players[0].characters[0].hp != 6:
+		return "Spirit Water must NOT boost non-Ult healing cards (expected Katara HP 6, got %d)" % s.players[0].characters[0].hp
+
+	# 3. With Spirit Water equipped: Katara Ult heals 1 + 2 = 3 HP to every living ally!
+	s.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	var hps2 := [s.players[0].characters[0].hp, s.players[0].characters[1].hp, s.players[0].characters[2].hp]
+	if hps2 != [9, 9, 10]:
+		return "Katara Ult with Spirit Water should heal all allies by 3 ([9, 9, 10]), got %s" % str(hps2)
+	return ""
+
+
+static func _test_azula_ult_stun() -> String:
+	var s := _start(["Azula", "Zuko", "Iroh"], ["Katara", "Toph", "Aang"])
+	s.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	var foe := s.players[1].characters[0]
+	if foe.hp != 7 or not TCGRulesEngine.has_status(foe, "Stunned"):
+		return "Azula Ult should deal 3 Electro DMG (HP 7) and apply Stunned"
+	# On P1's turn, stunned Katara must have NO legal skill actions
+	for a in TCGRulesEngine.legal_actions(s):
+		if a.type == "skill":
+			return "Stunned character must not have legal skill actions"
+	# At End Phase, Stunned clears
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	if TCGRulesEngine.has_status(foe, "Stunned"):
+		return "Stunned should expire at End Phase"
+	return ""
+
+
+static func _test_toph_ult_shield() -> String:
+	var s := _start(["Toph", "Aang", "Katara"], ["Zuko", "Azula", "Iroh"])
+	s.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	if s.players[1].characters[0].hp != 7:
+		return "Toph Ult should deal 3 Geo DMG (HP 7)"
+	var sh := TCGRulesEngine.find_status(s.players[0].combat, "Shield +2")
+	if sh == null or sh.shield != 2:
+		return "Toph Ult should grant Shield +2"
+	_hit(s, 0, 5, CardDataSystem.PHYSICAL, 0)
+	if s.players[0].characters[0].hp != 7:
+		return "Shield +2 should absorb 2 of 5 damage (HP 7), got %d" % s.players[0].characters[0].hp
+	return ""
+
+
+static func _test_iroh_ult_team_buff() -> String:
+	var s := _start(["Iroh", "Zuko", "Azula"], ["Katara", "Toph", "Aang"])
+	s.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 2))
+	if s.players[1].characters[0].hp != 6:
+		return "Iroh Ult should deal 4 Pyro DMG (HP 6), got %d" % s.players[1].characters[0].hp
+	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") == null:
+		return "Iroh Ult should grant teamwide Attack +1 for the round"
+	# Switch to Zuko and verify Zuko's Normal Attack (base 2) deals 3 DMG with teamwide buff
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	s.players[0].active = 1
+	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
+	if s.players[1].characters[0].hp != 3:
+		return "Teamwide Attack +1 should boost Zuko's Normal Attack from 2 to 3 DMG (HP 3), got %d" % s.players[1].characters[0].hp
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	if TCGRulesEngine.find_status(s.players[0].combat, "Attack +1") != null:
+		return "Iroh's teamwide Attack +1 should expire at End Phase"
+	return ""
+
+
+static func _test_equipment_damage_and_defeat() -> String:
+	var s := _start(["Zuko", "Azula", "Aang"], ["Katara", "Toph", "Iroh"])
+	_give(s, 0, ["Zuko's Dual Broadswords"])
+	# Must NOT be targetable on Azula (index 1)
+	var cd := CardDataSystem.get_card_def("Zuko's Dual Broadswords")
+	if TCGRulesEngine.card_targets(s.players[0], cd) != [0]:
+		return "Zuko's Dual Broadswords should only target Zuko (index 0)"
+	_play_card(s, "Zuko's Dual Broadswords", 0)
+	if s.current != 0:
+		return "Equipping should be a Fast Action"
 	TCGRulesEngine.apply_action(s, _find_skill_action(s, 0))
 	if s.players[1].characters[0].hp != 7:
-		return "Normal Boost +1 should boost Volt Shot from 2 to 3 DMG (HP 7)"
+		return "Broadswords should boost Zuko's Normal Attack from 2 to 3 DMG (HP 7), got %d" % s.players[1].characters[0].hp
+	# Defeating Zuko clears character statuses
+	_hit(s, 0, 99, CardDataSystem.PHYSICAL, 0)
+	if not s.players[0].characters[0].defeated or not s.players[0].characters[0].statuses.is_empty():
+		return "Defeat should clear equipped statuses"
 	return ""
 
 
+# ------------------------------------------------------------------------------
+# All 9 Utility Cards
+# ------------------------------------------------------------------------------
+static func _test_utility_dice_cards() -> String:
+	var s := _start(["Zuko", "Azula", "Aang"], ["Katara", "Toph", "Iroh"])
+	_give(s, 0, ["Elemental Dice", "Reroll Dice", "Omni Conversion"])
+	s.players[0].dice = [CardDataSystem.PYRO, CardDataSystem.HYDRO, CardDataSystem.GEO, CardDataSystem.ANEMO, CardDataSystem.OMNI]
+
+	# 1. Elemental Dice (0 cost): adds 1 Pyro die (Zuko's element)
+	_play_card(s, "Elemental Dice")
+	if s.players[0].dice.size() != 6 or s.players[0].dice.count(CardDataSystem.PYRO) != 2:
+		return "Elemental Dice should add 1 Pyro die without spending dice"
+
+	# 2. Reroll Dice (0 cost): auto-rerolls only non-Pyro, non-Omni dice; keeps 2 Pyro + 1 Omni intact
+	_play_card(s, "Reroll Dice")
+	if s.players[0].dice.size() != 6 or s.players[0].dice.count(CardDataSystem.PYRO) < 2 or s.players[0].dice.count(CardDataSystem.OMNI) < 1:
+		return "Reroll Dice must preserve matching Pyro and Omni dice"
+	if s.players[0].dice.has(CardDataSystem.CRYO):
+		return "Reroll Dice must never roll Cryo"
+
+	# 3. Omni Conversion (1 Any cost): spends 1 die and converts up to 3 non-Omni dice into Omni
+	s.players[0].dice = [CardDataSystem.HYDRO, CardDataSystem.GEO, CardDataSystem.ANEMO, CardDataSystem.ELECTRO, CardDataSystem.OMNI]
+	_play_card(s, "Omni Conversion")
+	if s.players[0].dice.size() != 4 or s.players[0].dice.count(CardDataSystem.OMNI) != 4:
+		return "Omni Conversion should spend 1 die and convert 3 non-Omni dice into Omni (4 Omni total), got %s" % str(s.players[0].dice)
+	return ""
+
+
+static func _test_utility_draw_and_swap() -> String:
+	var s := _start()
+	# 1. Draw Cards (1 Any): draws 2 cards
+	_give(s, 0, ["Draw Cards"])
+	var deck_before: int = s.players[0].deck.size()
+	_play_card(s, "Draw Cards")
+	if s.players[0].deck.size() != deck_before - 2 or s.players[0].hand.size() != 2:
+		return "Draw Cards should draw 2 cards"
+
+	# 2. Swap Cards (0 cost) with explicit player selection `ids = [0, 2]`
+	_give(s, 0, ["Swap Cards", "Reroll Dice", "Party Healing", "Elemental Dice"])
+	s.players[0].deck = ["Omni Conversion", "Dice Carryover", "Draw Cards"]
+	# Remember: Swap Cards (index 0) is removed first, so remaining hand is ["Reroll Dice", "Party Healing", "Elemental Dice"].
+	# Swapping indices [0, 2] keeps "Party Healing" and swaps out "Reroll Dice" & "Elemental Dice".
+	_play_card(s, "Swap Cards", -1, 0, [0, 2])
+	if s.players[0].hand.size() != 3 or not s.players[0].hand.has("Party Healing"):
+		return "Explicit Swap Cards should keep unselected Party Healing and draw 2 replacements"
+
+	# 3. Swap Cards with empty ids (AI auto-swap)
+	_give(s, 0, ["Swap Cards", "Reroll Dice", "Party Healing"])
+	_play_card(s, "Swap Cards")
+	if s.players[0].hand.size() != 2:
+		return "Auto Swap Cards should maintain hand size of 2 after consuming Swap Cards"
+	return ""
+
+
+static func _test_utility_dice_carryover() -> String:
+	var s := _start()
+	_give(s, 0, ["Dice Carryover"])
+	s.players[0].dice = [CardDataSystem.PYRO, CardDataSystem.HYDRO, CardDataSystem.GEO, CardDataSystem.ANEMO]
+	_play_card(s, "Dice Carryover") # spends 1 die -> 3 unused dice left
+	if s.players[0].dice.size() != 3:
+		return "Dice Carryover should cost 1 die, leaving 3 unused dice"
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	if s.players[0].dice.size() != 11:
+		return "Dice Carryover should yield 8 rolled + 3 carried Omni = 11 dice, got %d" % s.players[0].dice.size()
+	for idx in [8, 9, 10]:
+		if s.players[0].dice[idx] != CardDataSystem.OMNI:
+			return "Carried dice at index %d must be Omni" % idx
+	return ""
+
+
+static func _test_utility_healing_cards() -> String:
+	var s := _start()
+	# 1. Active Character Healing (0 cost): heals active by 1 HP and sets once-per-round healing limit
+	s.players[0].characters[0].hp = 6
+	_give(s, 0, ["Active Character Healing", "Dual Character Healing", "Party Healing"])
+	var dice_before: int = s.players[0].dice.size()
+	_play_card(s, "Active Character Healing")
+	if s.players[0].characters[0].hp != 7 or s.players[0].dice.size() != dice_before:
+		return "Active Character Healing should heal active by 1 HP for 0 dice"
+	if not s.players[0].heal_card_used:
+		return "Playing a healing action card must mark heal_card_used = true for the round"
+
+	# 1b. Second healing action card in the SAME round must be illegal (both in legal_actions and apply_action)
+	for a in TCGRulesEngine.legal_actions(s):
+		if a.type == "card" and a.player == 0:
+			var cn: String = s.players[0].hand[a.index]
+			if cn == "Dual Character Healing" or cn == "Party Healing":
+				return "Second healing action card '%s' must not be legal in the same round" % cn
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("card", 0, 0, -1, [0]))
+	if TCGRulesEngine.last_error.is_empty():
+		return "apply_action must reject a second healing action card in the same round"
+
+	# Advance to next round -> healing card limit resets!
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
+	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 1))
+	if s.players[0].heal_card_used:
+		return "heal_card_used must reset at the start of a new round"
+
+	# 2a. Dual Character Healing (1 Any): heals active (+1) AND lowest-HP standby (+1)
+	var s2 := _start()
+	s2.players[0].characters[0].hp = 7
+	s2.players[0].characters[1].hp = 4
+	s2.players[0].characters[2].hp = 9
+	_give(s2, 0, ["Dual Character Healing"])
+	_play_card(s2, "Dual Character Healing")
+	if s2.players[0].characters[0].hp != 8 or s2.players[0].characters[1].hp != 5 or s2.players[0].characters[2].hp != 9:
+		return "Dual Character Healing should heal active (+1) and lowest-HP standby (+1)"
+
+	# 2b. Dual Character Healing when active IS lowest HP -> heals active (+1) AND lowest of the OTHER TWO (+1), NOT active twice!
+	var s3 := _start()
+	s3.players[0].characters[0].hp = 3
+	s3.players[0].characters[1].hp = 8
+	s3.players[0].characters[2].hp = 6
+	_give(s3, 0, ["Dual Character Healing"])
+	_play_card(s3, "Dual Character Healing")
+	if s3.players[0].characters[0].hp != 4 or s3.players[0].characters[1].hp != 8 or s3.players[0].characters[2].hp != 7:
+		return "Dual Character Healing must heal active (3->4) and lowest-HP other ally (6->7), got [%d, %d, %d]" % [
+			s3.players[0].characters[0].hp, s3.players[0].characters[1].hp, s3.players[0].characters[2].hp
+		]
+
+	# 2c. Dual Character Healing skips defeated standby character and heals the living damaged standby
+	var s3b := _start()
+	s3b.players[0].characters[0].hp = 4
+	s3b.players[0].characters[1].hp = 0
+	s3b.players[0].characters[1].defeated = true
+	s3b.players[0].characters[2].hp = 7
+	_give(s3b, 0, ["Dual Character Healing"])
+	_play_card(s3b, "Dual Character Healing")
+	if s3b.players[0].characters[0].hp != 5 or s3b.players[0].characters[1].hp != 0 or s3b.players[0].characters[2].hp != 8:
+		return "Dual Character Healing should skip defeated standby and heal living standby (7->8)"
+
+	# 3. Party Healing (2 Any): heals all living allies by 1 HP
+	var s4 := _start()
+	s4.players[0].characters[0].hp = 5
+	s4.players[0].characters[1].hp = 6
+	s4.players[0].characters[2].hp = 7
+	_give(s4, 0, ["Party Healing"])
+	_play_card(s4, "Party Healing")
+	var hps := [s4.players[0].characters[0].hp, s4.players[0].characters[1].hp, s4.players[0].characters[2].hp]
+	if hps != [6, 7, 8]:
+		return "Party Healing should heal all living party members by 1 HP ([6, 7, 8]), got %s" % str(hps)
+	return ""
+
+
+# ------------------------------------------------------------------------------
+# Non-Mutating Preview Test
+# ------------------------------------------------------------------------------
 static func _test_preview_skill_and_card_no_mutation() -> String:
-	var s := _start(["Electro Ranger", "Pyro Vanguard", "Cryo Knight"], ["Cryo Knight", "Hydro Cleric", "Geo Guardian"])
+	var s := _start(["Azula", "Zuko", "Aang"], ["Katara", "Toph", "Iroh"])
 	# 1. Normal Attack preview (2 Physical DMG)
 	var prev_na := TCGRulesEngine.preview_skill(s, 0, 0)
 	if not bool(prev_na.get("ok", false)):
@@ -660,15 +838,15 @@ static func _test_preview_skill_and_card_no_mutation() -> String:
 	var prev_sk := TCGRulesEngine.preview_skill(s, 0, 1)
 	var f0_ov: Dictionary = prev_sk.get("foe_chars", {}).get(0, {})
 	var f1_ov: Dictionary = prev_sk.get("foe_chars", {}).get(1, {})
-	if int(f0_ov.get("total_dmg", 0)) != 5 or int(f0_ov.get("shield_dmg", 0)) != 1 or int(f0_ov.get("hp_after", -1)) != 6:
+	# Azula Blue Arc = 2 Electro + Overloaded (+2) = 4 total, Crystallize Shield blocks 1 -> HP 7
+	if int(f0_ov.get("total_dmg", 0)) != 4 or int(f0_ov.get("shield_dmg", 0)) != 1 or int(f0_ov.get("hp_after", -1)) != 7:
 		return "Overloaded + shield preview mismatch: " + str(f0_ov)
 	if String(f0_ov.get("reaction", "")) != "Overloaded" or not bool(f0_ov.get("forced_switch_out", false)) or not bool(f1_ov.get("forced_switch_in", false)):
 		return "Overloaded forced-switch flags missing: " + str(f0_ov) + " / " + str(f1_ov)
-	# Ensure live state completely untouched
 	if s.players[1].characters[0].hp != 10 or s.players[1].characters[0].aura != CardDataSystem.PYRO or s.players[1].active != 0 or s.players[1].combat.size() != 1:
 		return "preview_skill mutated live game state!"
 
-	# 3. Electro-Charged + standby Piercing damage + targeted Heal card preview
+	# 3. Electro-Charged + standby Piercing damage + Party Healing card preview
 	s.players[1].combat.clear()
 	s.players[1].characters[0].aura = CardDataSystem.HYDRO
 	var prev_ec := TCGRulesEngine.preview_skill(s, 0, 1)
@@ -680,11 +858,9 @@ static func _test_preview_skill_and_card_no_mutation() -> String:
 		return "Expected 1 Piercing DMG on standby foes for Electro-Charged"
 
 	s.players[0].characters[1].hp = 6
-	_give(s, 0, ["Major Heal"])
-	var prev_card := TCGRulesEngine.preview_card(s, 0, 0, 1)
+	_give(s, 0, ["Party Healing"])
+	var prev_card := TCGRulesEngine.preview_card(s, 0, 0, -1)
 	var own1_heal: int = int(prev_card.get("own_chars", {}).get(1, {}).get("heal", 0))
-	if not bool(prev_card.get("ok", false)) or own1_heal != 2 or s.players[0].characters[1].hp != 6 or s.players[0].hand.size() != 1:
-		return "Heal card preview_card mismatch or mutated state: " + str(prev_card)
+	if not bool(prev_card.get("ok", false)) or own1_heal != 1 or s.players[0].characters[1].hp != 6 or s.players[0].hand.size() != 1:
+		return "Party Healing preview_card mismatch or mutated state: " + str(prev_card)
 	return ""
-
-

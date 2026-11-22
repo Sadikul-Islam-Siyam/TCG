@@ -23,6 +23,7 @@ var _slide_tween: Tween = null
 var _display_order: Array[int] = []   # visual slot -> logical p.dice index
 var _hovered_idx: int = -1            # logical die index
 var _hover_chevron: bool = false
+var _die_lifts: Dictionary = {}       # logical die index -> smooth outward offset px
 var spin_timers: Dictionary = {}
 var spin_durations: Dictionary = {}
 var _tune_flip_timers: Dictionary = {}
@@ -80,6 +81,16 @@ func _process(delta: float) -> void:
 				kept.append(sp)
 		_spend_sparks = kept
 		dirty = true
+	var k_lift := 1.0 - exp(-18.0 * delta)
+	for li in _display_order:
+		var target_lift: float = 12.0 if selected_indices.has(li) else (5.0 if (_hovered_idx == li or highlighted_indices.has(li)) else 0.0)
+		var cur_lift: float = float(_die_lifts.get(li, 0.0))
+		if absf(cur_lift - target_lift) > 0.15:
+			_die_lifts[li] = lerpf(cur_lift, target_lift, k_lift)
+			dirty = true
+		elif cur_lift != target_lift:
+			_die_lifts[li] = target_lift
+			dirty = true
 	if dirty:
 		queue_redraw()
 
@@ -275,25 +286,28 @@ func _notification(what: int) -> void:
 func _draw() -> void:
 	var ox: float = slide_t * (size.x - 36.0)
 	var tray := Rect2(Vector2(ox, 0.0), size)
-	var border_col := TCGTheme.GOLD_L if tuning_active else TCGTheme.GOLD
+	var border_col := TCGTheme.GOLD_L if tuning_active else Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.78)
 	TCGTheme.draw_rounded_box(
 		self,
 		tray,
-		Color(0.06, 0.09, 0.14, 0.88),
+		Color(0.04, 0.07, 0.12, 0.78),
 		border_col,
-		14,
-		3 if tuning_active else 2
+		16,
+		2.5 if tuning_active else 1.6,
+		Vector2(-2, 4),
+		95
 	)
 
 	# Collapsible Chevron Tab (T6.1)
 	var chev_r := _chevron_rect()
-	TCGTheme.draw_rounded_box(self, chev_r, TCGTheme.PANEL2, TCGTheme.GOLD_L if _hover_chevron else border_col, 8, 2)
+	TCGTheme.draw_rounded_box(self, chev_r, Color(0.06, 0.09, 0.15, 0.88), TCGTheme.GOLD_L if _hover_chevron else border_col, 8, 1.5)
 	TCGTheme.draw_text_centered(self, "›" if is_open else "‹", chev_r.get_center(), 22, TCGTheme.GOLD_L, true, true)
 
-	# Dice count badge / payment counter progress (T6.5)
-	var badge_c := Vector2(ox + size.x * 0.5, 25.0)
-	draw_circle(badge_c, 20.0, TCGTheme.PANEL2)
-	draw_arc(badge_c, 20.0, 0.0, TAU, 24, TCGTheme.GOLD_L, 2.2)
+	# Glowing circular total dice counter (Genshin right-rail style)
+	var badge_c := Vector2(ox + size.x * 0.5, 27.0)
+	draw_circle(badge_c, 22.0, Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.12))
+	draw_circle(badge_c, 19.0, Color(0.07, 0.10, 0.16, 0.96))
+	draw_arc(badge_c, 19.0, 0.0, TAU, 28, TCGTheme.GOLD_L, 2.2)
 	if payment_needed > 0:
 		var prog_txt := "%d/%d" % [selected_indices.size(), payment_needed]
 		var ok_p := selected_indices.size() >= payment_needed
@@ -306,16 +320,16 @@ func _draw() -> void:
 		TCGTheme.draw_text_centered(
 			self,
 			"TUNE" if can_tune else "NO DIE",
-			Vector2(ox + size.x * 0.5, 51.0),
-			12,
+			Vector2(ox + size.x * 0.5, 53.0),
+			11,
 			TCGTheme.GOLD_L if can_tune else TCGTheme.RED,
 			true,
 			false
 		)
 	elif rerolls_left > 0:
-		TCGTheme.draw_text_centered(self, "REROLL", Vector2(ox + size.x * 0.5, 51.0), 12, TCGTheme.TEAL, true, false)
+		TCGTheme.draw_text_centered(self, "REROLL", Vector2(ox + size.x * 0.5, 53.0), 11, TCGTheme.TEAL, true, false)
 	else:
-		TCGTheme.draw_text_centered(self, "DICE", Vector2(ox + size.x * 0.5, 51.0), 12, TCGTheme.DIM, true, false)
+		TCGTheme.draw_text_centered(self, "DICE", Vector2(ox + size.x * 0.5, 53.0), 11, TCGTheme.DIM, true, false)
 
 	if slide_t < 0.85:
 		for vp in range(_display_order.size()):
@@ -327,9 +341,9 @@ func _draw() -> void:
 			var is_hl := highlighted_indices.has(li) or (tuning_active and tunable_indices.has(li))
 			var is_hov := (_hovered_idx == li)
 			var is_dim := (tuning_active and not tunable_indices.has(li))
-			# T6.5 Lift selected payment dice 12px outward
-			if is_sel:
-				dr.position.x -= 12.0
+			# Smoothly glide selected/hovered payment dice outward
+			var lift_x: float = float(_die_lifts.get(li, 12.0 if is_sel else 0.0))
+			dr.position.x -= lift_x
 
 			if spin_timers.has(li) and float(spin_timers[li]) > 0.0:
 				var rem: float = float(spin_timers[li])

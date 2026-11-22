@@ -140,11 +140,11 @@ func _draw() -> void:
 		TCGTheme.draw_text_centered(self, String(data.get("label", "+1")), c, 12, Color.WHITE, true, true)
 	else:
 		var badge_kind := kind
+		var nm := String(data.get("name", ""))
 		if kind == "buff" or kind == "debuff" or kind == "special":
-			var nm := String(data.get("name", ""))
 			if nm == "Frozen" or nm == "Petrified":
 				badge_kind = "freeze"
-		TCGArt.draw_status_badge(self, rect, badge_kind, elem, _count)
+		TCGArt.draw_status_badge(self, rect, badge_kind, elem, _count, nm)
 		draw_arc(rect.get_center(), minf(size.x, size.y) * 0.5 - 1.0, 0.0, TAU, 24, TCGTheme.GOLD_L if _hovered else ring, 2.0 if _hovered else 1.6)
 		if _count > 0:
 			var pr := Rect2(size.x - 16.0, size.y - 14.0, 16.0, 14.0)

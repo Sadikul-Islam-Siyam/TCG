@@ -88,6 +88,10 @@ func get_card_global_center(idx: int) -> Vector2:
 	return global_position + size * 0.5
 
 
+func is_engaged() -> bool:
+	return _hovered_index >= 0 or selected_hand_index >= 0 or mulligan_mode or not swap_indices.is_empty() or dragged_index >= 0
+
+
 func trigger_card_shake(idx: int) -> void:
 	if idx >= 0 and idx < _card_views.size() and is_instance_valid(_card_views[idx]):
 		_card_views[idx].trigger_unplayable_shake()
@@ -192,7 +196,8 @@ func _layout_cards(newly_added: Array[int] = []) -> void:
 
 
 func _process(delta: float) -> void:
-	var speed: float = minf(1.0, delta * 18.0)
+	var speed: float = 1.0 - exp(-18.0 * delta)
+	var fade_sp: float = 1.0 - exp(-14.0 * delta)
 	for i in range(_card_views.size()):
 		if i >= _target_positions.size():
 			break
@@ -202,7 +207,7 @@ func _process(delta: float) -> void:
 		cv.position = cv.position.lerp(_target_positions[i], speed)
 		cv.rotation = lerpf(cv.rotation, _target_rotations[i], speed)
 		cv.scale = cv.scale.lerp(_target_scales[i], speed)
-		cv.modulate.a = lerpf(cv.modulate.a, 1.0, minf(1.0, delta * 14.0))
+		cv.modulate.a = lerpf(cv.modulate.a, 1.0, fade_sp)
 
 
 func _on_card_clicked(c_name: String, idx: int) -> void:

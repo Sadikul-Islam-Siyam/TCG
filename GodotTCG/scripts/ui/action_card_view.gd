@@ -28,12 +28,20 @@ var _press_time: float = 0.0
 var _long_fired: bool = false
 var _shake_timer: float = 0.0
 var _sheen_t: float = -1.0
+var _foil_mat: ShaderMaterial = null
+
+const FOIL_SHADER_RES: Shader = preload("res://shaders/card_foil.gdshader")
 
 
 func _init() -> void:
 	custom_minimum_size = Vector2(96, 136)
 	size = Vector2(146, 207)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	if FOIL_SHADER_RES != null:
+		_foil_mat = ShaderMaterial.new()
+		_foil_mat.shader = FOIL_SHADER_RES
+		material = _foil_mat
 
 
 func setup(
@@ -70,11 +78,16 @@ func _process(delta: float) -> void:
 	if _hovered and not hidden_back:
 		if _sheen_t < 0.0:
 			_sheen_t = 0.0
-		_sheen_t = fmod(_sheen_t + delta * 0.9, 1.6)
+		_sheen_t = fmod(_sheen_t + delta * 0.72, 1.8)
 		dirty = true
 	elif _sheen_t >= 0.0:
 		_sheen_t = -1.0
 		dirty = true
+	if _foil_mat != null:
+		var active_foil := (_hovered or selected) and not hidden_back
+		_foil_mat.set_shader_parameter("sheen_pos", lerpf(-0.3, 1.3, clampf(_sheen_t, 0.0, 1.0)) if active_foil and _sheen_t >= 0.0 else -0.5)
+		_foil_mat.set_shader_parameter("sheen_strength", 0.22 if active_foil and _sheen_t >= 0.0 else 0.0)
+		_foil_mat.set_shader_parameter("brightness_boost", 0.06 if active_foil else 0.0)
 	if _pressing and not _long_fired and not interaction_locked:
 		_press_time += delta
 		if _press_time >= 0.45:
@@ -94,9 +107,10 @@ func _notification(what: int) -> void:
 		card_hovered.emit(card_name, hand_index, true)
 		queue_redraw()
 	elif what == NOTIFICATION_MOUSE_EXIT:
-		if _pressing and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and playable and not hidden_back and not interaction_locked:
+		if _pressing and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not hidden_back and not interaction_locked:
 			_pressing = false
-			card_drag_started.emit(card_name, hand_index, get_global_mouse_position())
+			var drag_pos: Vector2 = get_global_mouse_position() if is_inside_tree() else (global_position + size * 0.5)
+			card_drag_started.emit(card_name, hand_index, drag_pos)
 			return
 		_hovered = false
 		_pressing = false
@@ -124,10 +138,12 @@ func _gui_input(event: InputEvent) -> void:
 			card_right_clicked.emit(card_name, hand_index)
 			accept_event()
 	elif event is InputEventMouseMotion and _pressing and not interaction_locked:
-		if (event as InputEventMouseMotion).position.distance_to(_press_pos) > 8.0:
+		var mm := event as InputEventMouseMotion
+		if mm.position.distance_to(_press_pos) > 8.0:
 			_pressing = false
-			if playable and not hidden_back:
-				card_drag_started.emit(card_name, hand_index, get_global_mouse_position())
+			if not hidden_back:
+				var drag_pos: Vector2 = get_global_mouse_position() if is_inside_tree() else (global_position + mm.position)
+				card_drag_started.emit(card_name, hand_index, drag_pos)
 				accept_event()
 
 
@@ -194,30 +210,70 @@ static func draw_card_surface(
 	var h: float = r.size.y
 
 	var compact: bool = (not p_large and h < 120.0)
-	var art_h: float = 128.0 if p_large else (40.0 if compact else roundf(h * 0.44))
-	var art_r := Rect2(ox + 7, oy + 7, w - 14, art_h)
-	var role_name: String = CardDataSystem.infer_card_role(cd)
-	var cat_col: Color = Color8(36, 68, 52) if role_name == "heal" else Color8(40, 56, 78)
-
-	TCGTheme.draw_rounded_box(canvas, art_r, cat_col, TCGTheme.GOLD_D, 7, 1)
-
 	var card_tex: Texture2D = TCGArt.get_card_texture(cd.name)
-	if card_tex != null:
-		TCGArt.draw_texture_cover(canvas, card_tex, art_r.grow(-2.0), Color.WHITE, 0.5)
+	var is_full_portrait_art: bool = (
+		not p_large
+		and card_tex != null
+		and card_tex.get_height() > card_tex.get_width()
+	)
+	var role_name: String = CardDataSystem.infer_card_role(cd)
+	var is_heal_card: bool = (role_name == "heal")
+	if not is_heal_card:
+		for st in cd.play_steps:
+			if st.op in ["heal", "heal_most_injured", "heal_all", "heal_dual"]:
+				is_heal_card = true
+				break
+
+	var art_h: float = roundf(h * 0.54) if (p_large and card_tex != null and card_tex.get_height() > card_tex.get_width()) else (128.0 if p_large else (40.0 if compact else roundf(h * 0.44)))
+	var art_r := Rect2(ox + 7, oy + 7, w - 14, art_h)
+
+	if is_full_portrait_art:
+		# Full-bleed vertical TCG art inside the gold card frame (matches 896x1200 portrait illustrations)
+		var full_r := r.grow(-5.0)
+		TCGArt.draw_texture_cover(canvas, card_tex, full_r, Color.WHITE, 0.48)
+		# Subtle inner gold border over full-bleed art
+		var frame_sb := StyleBoxFlat.new()
+		frame_sb.bg_color = Color(0, 0, 0, 0)
+		frame_sb.border_color = TCGTheme.GOLD_L if (p_selected or p_hovered) else TCGTheme.GOLD_D
+		frame_sb.set_border_width_all(2 if (p_selected or p_hovered) else 1)
+		frame_sb.set_corner_radius_all(6)
+		canvas.draw_style_box(frame_sb, full_r)
+		# Dark translucent bottom plate for crisp title readability
+		var plate_h: float = 28.0 if compact else clampf(h * 0.27, 42.0, 56.0)
+		var plate_r := Rect2(full_r.position.x, full_r.end.y - plate_h, full_r.size.x, plate_h)
+		canvas.draw_rect(plate_r, Color(0.05, 0.07, 0.11, 0.84))
+		canvas.draw_line(
+			Vector2(plate_r.position.x, plate_r.position.y),
+			Vector2(plate_r.end.x, plate_r.position.y),
+			TCGTheme.GOLD_D,
+			1.0
+		)
 	else:
-		# Category / Element Emblem
-		var ac := art_r.get_center()
-		var rad: float = 32.0 if p_large else (14.0 if compact else 24.0)
-		if not cd.cost.element.is_empty():
-			TCGArt.draw_elem_symbol(canvas, cd.cost.element, ac, rad)
-		elif role_name == "heal":
-			# Crisp cross / heal emblem for Heal cards
-			var arm: float = rad * 0.58
-			var thick: float = maxf(4.0, rad * 0.28)
-			canvas.draw_rect(Rect2(ac.x - arm, ac.y - thick * 0.5, arm * 2.0, thick), TCGTheme.HEAL)
-			canvas.draw_rect(Rect2(ac.x - thick * 0.5, ac.y - arm, thick, arm * 2.0), TCGTheme.HEAL)
+		var cat_col: Color = Color8(72, 50, 38) if role_name == "equipment" else (Color8(36, 68, 52) if is_heal_card else Color8(40, 56, 78))
+		TCGTheme.draw_rounded_box(canvas, art_r, cat_col, TCGTheme.GOLD_D, 7, 1)
+		if card_tex != null:
+			TCGArt.draw_texture_cover(canvas, card_tex, art_r.grow(-2.0), Color.WHITE, 0.5)
 		else:
-			TCGArt.draw_elem_symbol(canvas, "Omni", ac, rad * 0.9)
+			# Category / Element Emblem
+			var ac := art_r.get_center()
+			var rad: float = 32.0 if p_large else (14.0 if compact else 24.0)
+			var owner_el: String = ""
+			if not cd.char_name.is_empty():
+				var ch_d := CardDataSystem.get_char_def(cd.char_name)
+				if ch_d != null:
+					owner_el = ch_d.element
+			if not cd.cost.element.is_empty():
+				TCGArt.draw_elem_symbol(canvas, cd.cost.element, ac, rad)
+			elif not owner_el.is_empty():
+				TCGArt.draw_elem_symbol(canvas, owner_el, ac, rad)
+			elif is_heal_card:
+				# Crisp cross / heal emblem for Heal cards
+				var arm: float = rad * 0.58
+				var thick: float = maxf(4.0, rad * 0.28)
+				canvas.draw_rect(Rect2(ac.x - arm, ac.y - thick * 0.5, arm * 2.0, thick), TCGTheme.HEAL)
+				canvas.draw_rect(Rect2(ac.x - thick * 0.5, ac.y - arm, thick, arm * 2.0), TCGTheme.HEAL)
+			else:
+				TCGArt.draw_elem_symbol(canvas, "Omni", ac, rad * 0.9)
 
 	# Cost gems stacked top-left
 	var gem_r: float = 15.0 if p_large else (8.0 if compact else 13.0)
@@ -247,27 +303,40 @@ static func draw_card_surface(
 
 	# Card Name
 	var disp_title: String = cd.name
-	var name_y_off: float = 20.0 if p_large else (2.0 if compact else 8.0)
-	var name_rect := Rect2(ox + 8, cat_y + name_y_off, w - 16, 28 if compact else (54 if not p_large else 46))
-	TCGTheme.draw_wrapped(
-		canvas,
-		disp_title,
-		name_rect,
-		17 if p_large else (9 if compact else 14),
-		TCGTheme.INK,
-		21 if p_large else (11 if compact else 17),
-		false
-	)
-
-	if p_large:
-		var desc_rect := Rect2(ox + 12, name_rect.end.y + 6.0, w - 24, oy + h - name_rect.end.y - 12.0)
-		canvas.draw_line(
-			Vector2(ox + 12, name_rect.end.y),
-			Vector2(ox + w - 12, name_rect.end.y),
-			TCGTheme.PARCH_D,
-			1.0
+	if is_full_portrait_art:
+		var plate_h2: float = 28.0 if compact else clampf(h * 0.27, 42.0, 56.0)
+		var name_rect_full := Rect2(ox + 8, oy + h - 5.0 - plate_h2 + 4.0, w - 16, plate_h2 - 6.0)
+		TCGTheme.draw_wrapped(
+			canvas,
+			disp_title,
+			name_rect_full,
+			9 if compact else 13,
+			TCGTheme.TEXT,
+			11 if compact else 16,
+			false
 		)
-		TCGTheme.draw_wrapped(canvas, cd.text, desc_rect, 14, Color8(62, 52, 42), 18, false)
+	else:
+		var name_y_off: float = 20.0 if p_large else (2.0 if compact else 8.0)
+		var name_rect := Rect2(ox + 8, cat_y + name_y_off, w - 16, 28 if compact else (54 if not p_large else 42))
+		TCGTheme.draw_wrapped(
+			canvas,
+			disp_title,
+			name_rect,
+			16 if p_large else (9 if compact else 14),
+			TCGTheme.INK,
+			20 if p_large else (11 if compact else 17),
+			false
+		)
+
+		if p_large:
+			var desc_rect := Rect2(ox + 12, name_rect.end.y + 4.0, w - 24, oy + h - name_rect.end.y - 10.0)
+			canvas.draw_line(
+				Vector2(ox + 12, name_rect.end.y),
+				Vector2(ox + w - 12, name_rect.end.y),
+				TCGTheme.PARCH_D,
+				1.0
+			)
+			TCGTheme.draw_wrapped(canvas, cd.text, desc_rect, 13, Color8(62, 52, 42), 17, false)
 
 	# Diagonal foil sheen sweep on high-rarity / hovered card (T5.11)
 	if p_sheen_t >= 0.0 and p_sheen_t <= 1.0:
@@ -280,9 +349,21 @@ static func draw_card_surface(
 		])
 		canvas.draw_colored_polygon(sheen_pts, Color(1.0, 0.96, 0.80, 0.16))
 
-	# Unaffordable dim veil (T5.10)
+	# Genshin-style red circular X "Switch" stamp when marked for Mulligan or Swap Cards
+	if p_swap_marked:
+		TCGTheme.draw_rounded_box(canvas, r.grow(-4.0), Color(0.06, 0.04, 0.06, 0.44), TCGTheme.RED, 8, 2)
+		var sc := Vector2(ox + w * 0.5, oy + h * 0.45)
+		var sr := minf(w, h) * 0.21
+		canvas.draw_circle(sc, sr, Color8(216, 68, 56))
+		canvas.draw_arc(sc, sr, 0.0, TAU, 24, Color.WHITE, 2.4)
+		var arm := sr * 0.44
+		canvas.draw_line(sc + Vector2(-arm, -arm), sc + Vector2(arm, arm), Color.WHITE, 3.2)
+		canvas.draw_line(sc + Vector2(arm, -arm), sc + Vector2(-arm, arm), Color.WHITE, 3.2)
+		TCGTheme.draw_text_centered(canvas, "Switch", Vector2(sc.x, sc.y + sr + 14.0), 13 if not compact else 10, Color.WHITE, true, true)
+
+	# Unaffordable dim veil (subtle so card art stays crisp & readable)
 	if p_dim_unusable and not p_selected and not p_swap_marked:
-		TCGTheme.draw_rounded_box(canvas, r, Color(0.05, 0.07, 0.11, 0.46), Color(0, 0, 0, 0), 10, 0)
+		TCGTheme.draw_rounded_box(canvas, r, Color(0.04, 0.06, 0.10, 0.28), Color(0, 0, 0, 0), 10, 0)
 
 
 func _draw() -> void:
@@ -297,6 +378,6 @@ func _draw() -> void:
 		large_mode,
 		swap_marked,
 		hidden_back,
-		dim_unusable or not playable,
-		_sheen_t if (card_name != "" and (_hovered or selected)) else -1.0
+		dim_unusable,
+		-1.0
 	)

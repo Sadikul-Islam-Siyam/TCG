@@ -28,8 +28,10 @@ func sync_statuses(statuses: Array, owner_elem: String = "Physical") -> void:
 		var kind := "buff"
 		if st.shield > 0 or (sdef != null and sdef.shield > 0):
 			kind = "shield"
-		elif sname == "Frozen" or sname == "Petrified":
+		elif sname == "Frozen" or sname == "Petrified" or sname == "Stunned":
 			kind = "debuff"
+		elif sname == "Dice Carryover":
+			kind = "special"
 		var cnt: int = st.shield if st.shield > 0 else maxi(0, st.usages)
 		if cnt <= 0 and st.duration >= 0:
 			cnt = st.duration

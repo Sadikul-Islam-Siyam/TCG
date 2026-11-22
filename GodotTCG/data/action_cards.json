@@ -1,113 +1,162 @@
 {
   "cards": [
     {
-      "name": "Minor Heal",
+      "name": "Aang's Glider Staff",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Aang",
+      "status": "Equip +1 DMG",
+      "cost": { "element": "", "n": 2, "unaligned": 0 },
+      "use_target": true,
+      "text": "Equip to Aang: Aang's attacks deal +1 DMG."
+    },
+    {
+      "name": "Katara's Spirit Water",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Katara",
+      "status": "Spirit Water",
+      "cost": { "element": "", "n": 0, "unaligned": 1 },
+      "use_target": true,
+      "text": "Equip to Katara: Katara's Ultimate heals +2 additional HP."
+    },
+    {
+      "name": "Zuko's Dual Broadswords",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Zuko",
+      "status": "Equip +1 DMG",
+      "cost": { "element": "", "n": 2, "unaligned": 0 },
+      "use_target": true,
+      "text": "Equip to Zuko: Zuko's attacks deal +1 DMG."
+    },
+    {
+      "name": "Azula's Dagger",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Azula",
+      "status": "Equip +1 DMG",
+      "cost": { "element": "", "n": 2, "unaligned": 0 },
+      "use_target": true,
+      "text": "Equip to Azula: Azula's attacks deal +1 DMG."
+    },
+    {
+      "name": "Earth Rumble Championship Belt",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Toph",
+      "status": "Equip +1 DMG",
+      "cost": { "element": "", "n": 2, "unaligned": 0 },
+      "use_target": true,
+      "text": "Equip to Toph: Toph's attacks deal +1 DMG."
+    },
+    {
+      "name": "Iroh's Pearl-Handled Dagger",
+      "kind": "weapon",
+      "role": "equipment",
+      "char_name": "Iroh",
+      "status": "Equip +1 DMG",
+      "cost": { "element": "", "n": 2, "unaligned": 0 },
+      "use_target": true,
+      "text": "Equip to Iroh: Iroh's attacks deal +1 DMG."
+    },
+    {
+      "name": "Reroll Dice",
       "kind": "event",
-      "role": "heal",
+      "role": "utility",
       "cost": { "n": 0, "unaligned": 0 },
-      "use_target": true,
-      "text": "Heal a chosen character for 1 HP.",
-      "steps": [
-        { "op": "heal", "amount": 1 }
-      ]
-    },
-    {
-      "name": "Major Heal",
-      "kind": "event",
-      "role": "heal",
-      "cost": { "n": 0, "unaligned": 1 },
-      "use_target": true,
-      "text": "Heal a chosen character for 2 HP.",
-      "steps": [
-        { "op": "heal", "amount": 2 }
-      ]
-    },
-    {
-      "name": "Team Tonic",
-      "kind": "event",
-      "role": "heal",
-      "cost": { "n": 0, "unaligned": 2 },
       "use_target": false,
-      "text": "Heal your most injured character for 3 HP.",
+      "text": "Automatically reroll all non-matching, non-Omni dice.",
       "steps": [
-        { "op": "heal_most_injured", "amount": 3 }
+        { "op": "reroll_off_element" }
       ]
     },
     {
-      "name": "Power Boost",
+      "name": "Draw Cards",
       "kind": "event",
-      "role": "buff",
+      "role": "utility",
       "cost": { "n": 0, "unaligned": 1 },
       "use_target": false,
-      "text": "Your next Normal Attack, Skill, or Ult deals +2 DMG.",
-      "steps": [
-        { "op": "combat_status", "status": "Next Attack +2" }
-      ]
-    },
-    {
-      "name": "Battle Cry",
-      "kind": "event",
-      "role": "buff",
-      "cost": { "n": 0, "unaligned": 2 },
-      "use_target": false,
-      "text": "This round, your Normal Attack, Skill, and Ult deal +1 DMG.",
-      "steps": [
-        { "op": "combat_status", "status": "Attack +1" }
-      ]
-    },
-    {
-      "name": "Iron Guard",
-      "kind": "event",
-      "role": "buff",
-      "cost": { "n": 0, "unaligned": 1 },
-      "use_target": false,
-      "text": "Grant 2 Shield to your active character.",
-      "steps": [
-        { "op": "combat_status", "status": "Shield +2" }
-      ]
-    },
-    {
-      "name": "Fortify",
-      "kind": "event",
-      "role": "buff",
-      "cost": { "n": 0, "unaligned": 2 },
-      "use_target": false,
-      "text": "Grant 3 Shield to your active character.",
-      "steps": [
-        { "op": "combat_status", "status": "Shield +3" }
-      ]
-    },
-    {
-      "name": "Energy Charge",
-      "kind": "event",
-      "role": "buff",
-      "cost": { "n": 0, "unaligned": 1 },
-      "use_target": false,
-      "text": "Your active character gains 1 Energy.",
-      "steps": [
-        { "op": "gain_energy", "amount": 1 }
-      ]
-    },
-    {
-      "name": "Tactical Draw",
-      "kind": "event",
-      "role": "buff",
-      "cost": { "n": 0, "unaligned": 1 },
-      "use_target": false,
-      "text": "Draw 2 cards.",
+      "text": "Draw 2 cards from the deck.",
       "steps": [
         { "op": "draw", "amount": 2 }
       ]
     },
     {
-      "name": "Quick Rally",
+      "name": "Swap Cards",
       "kind": "event",
-      "role": "buff",
+      "role": "utility",
       "cost": { "n": 0, "unaligned": 0 },
       "use_target": false,
-      "text": "Draw 1 card.",
+      "text": "Swap up to 2 cards between your hand and deck.",
       "steps": [
-        { "op": "draw", "amount": 1 }
+        { "op": "swap_cards", "amount": 2 }
+      ]
+    },
+    {
+      "name": "Elemental Dice",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 0 },
+      "use_target": false,
+      "text": "Gain 1 die matching your active character's element.",
+      "steps": [
+        { "op": "gain_active_dice", "amount": 1 }
+      ]
+    },
+    {
+      "name": "Dice Carryover",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Carry unused dice from this round into the next round as Omni Dice.",
+      "steps": [
+        { "op": "combat_status", "status": "Dice Carryover" }
+      ]
+    },
+    {
+      "name": "Omni Conversion",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Convert up to 3 dice into Omni Dice.",
+      "steps": [
+        { "op": "convert_to_omni", "amount": 3 }
+      ]
+    },
+    {
+      "name": "Active Character Healing",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 0 },
+      "use_target": false,
+      "text": "Heal your active character for 1 HP.",
+      "steps": [
+        { "op": "heal", "amount": 1 }
+      ]
+    },
+    {
+      "name": "Dual Character Healing",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 1 },
+      "use_target": false,
+      "text": "Heal your active character and the lowest-HP standby character for 1 HP each.",
+      "steps": [
+        { "op": "heal_dual", "amount": 1 }
+      ]
+    },
+    {
+      "name": "Party Healing",
+      "kind": "event",
+      "role": "utility",
+      "cost": { "n": 0, "unaligned": 2 },
+      "use_target": false,
+      "text": "Heal every living party member for 1 HP.",
+      "steps": [
+        { "op": "heal_all", "amount": 1 }
       ]
     }
   ]

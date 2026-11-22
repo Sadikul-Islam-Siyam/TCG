@@ -1,19 +1,18 @@
 class_name TCGAITestSuite
 extends RefCounted
 ## AITestSuite
-## Complete GDScript port of `genius_tcg/tests/test_ai.py`.
-## Verifies Fuzzy Logic, Heuristic Evaluation, CSP AllDiff & Smart Dice Payment,
-## Hidden-Information Determinization & No-Cheating Guarantees, State Immutability,
-## A* Lethal Planner, Iterative-Deepening Alpha-Beta Search, Information-Set MCTS,
-## Full AI-vs-Random / AI-vs-AI Matches, and CSP Random Deck Generation.
+## Verifies Fuzzy Logic, Heuristic Evaluation, CSP AllDiff & Smart Dice Payment
+## (including Same-Element costs), Hidden-Information Determinization & No-Cheating,
+## State Immutability, A* Lethal Planner, Iterative-Deepening Alpha-Beta Search,
+## Information-Set MCTS, Full AI-vs-Random / AI-vs-AI Matches, and CSP Random Decks.
 
 
 static func _start(
-	c0: Array = ["Electro Ranger", "Pyro Vanguard", "Cryo Knight"],
-	c1: Array = ["Cryo Knight", "Hydro Cleric", "Geo Guardian"],
+	c0: Array = ["Zuko", "Azula", "Aang"],
+	c1: Array = ["Katara", "Toph", "Iroh"],
 	seed_val: int = 1
 ) -> TCGGameState:
-	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(), c1, CardDataSystem.starter_deck(), seed_val)
+	var s := TCGRulesEngine.new_game(c0, CardDataSystem.starter_deck(c0), c1, CardDataSystem.starter_deck(c1), seed_val)
 	while s.phase != "action":
 		var acts := TCGRulesEngine.legal_actions(s)
 		TCGRulesEngine.apply_action(s, acts[0])
@@ -174,6 +173,13 @@ static func _test_smart_pay_keeps_omni() -> void:
 	for i in pay2:
 		assert(dice[i] != CardDataSystem.OMNI)
 
+	# "2 dice of the same type" cost should prefer non-Omni matching pair (two Geo or two Pyro) over Omni
+	var same_dice: Array = [CardDataSystem.OMNI, CardDataSystem.GEO, CardDataSystem.GEO, CardDataSystem.PYRO]
+	var pay_same = TCGDicePay.smart_pay(same_dice, CardDataSystem.CostData.new("", 2, 0), [CardDataSystem.PYRO])
+	assert(pay_same != null and pay_same.size() == 2)
+	for i in pay_same:
+		assert(same_dice[i] == CardDataSystem.GEO)
+
 	assert(TCGDicePay.smart_pay([CardDataSystem.PYRO], CardDataSystem.CostData.new(CardDataSystem.PYRO, 2)) == null)
 	var pay_free = TCGDicePay.smart_pay(dice, CardDataSystem.CostData.new())
 	assert(pay_free != null and pay_free.is_empty())
@@ -184,9 +190,11 @@ static func _test_smart_pay_always_valid() -> void:
 	for _it in range(300):
 		var n_dice: int = rng.randi_range(3, 12)
 		var dice: Array[String] = TCGDiceSystem.roll(rng, n_dice)
-		var el: String = CardDataSystem.ELEMENTS[rng.randi_range(0, CardDataSystem.ELEMENTS.size() - 1)]
+		var use_same: bool = (_it % 5 == 0)
+		var el: String = "" if use_same else CardDataSystem.ELEMENTS[rng.randi_range(0, CardDataSystem.ELEMENTS.size() - 1)]
 		var cost := CardDataSystem.CostData.new(el, rng.randi_range(0, 4), rng.randi_range(0, 3))
-		var pay = TCGDicePay.smart_pay(dice, cost, [cost.element])
+		var keep: Array = [] if el.is_empty() else [el]
+		var pay = TCGDicePay.smart_pay(dice, cost, keep)
 		var greedy = TCGDiceSystem.auto_pay(dice, cost)
 		assert((pay == null) == (greedy == null))
 		if pay != null:
@@ -235,7 +243,7 @@ static func _test_ai_never_peeks_hidden_cards() -> void:
 		else:
 			var filler_hand: Array[String] = []
 			for _i in range(t.players[1].hand.size()):
-				filler_hand.append("Iron Guard")
+				filler_hand.append("Draw Cards")
 			t.players[1].hand = filler_hand
 
 		var rev_foe_deck: Array[String] = t.players[1].deck.duplicate()
@@ -278,7 +286,8 @@ static func _test_choose_leaves_state_untouched() -> void:
 # ------------------------------------------------------------------------------
 static func _test_planner_one_move_lethal() -> void:
 	var s := _start()
-	s.players[1].characters[0].hp = 3
+	_give(s, 0, ["Draw Cards", "Party Healing"])
+	s.players[1].characters[0].hp = 3   # Zuko's Fire Whip deals 3 Pyro DMG
 	var plan = TCGPlanner.plan_lethal(TCGWorld.determinize(s, 0, _make_rng(1)), 0)
 	assert(plan != null and plan.size() == 1 and plan[0].type == "skill")
 	TCGRulesEngine.apply_action(s, plan[0])
@@ -287,8 +296,8 @@ static func _test_planner_one_move_lethal() -> void:
 
 static func _test_planner_chains_equipment_then_attack() -> void:
 	var s := _start()
-	s.players[1].characters[0].hp = 5   # Skill does 3: needs Power Boost (+2 DMG)
-	_give(s, 0, ["Power Boost", "Tactical Draw"])
+	s.players[1].characters[0].hp = 4   # Zuko's Fire Whip does 3: needs Zuko's Dual Broadswords (+1 DMG)
+	_give(s, 0, ["Zuko's Dual Broadswords", "Draw Cards"])
 	var plan = TCGPlanner.plan_lethal(TCGWorld.determinize(s, 0, _make_rng(1)), 0)
 	assert(plan != null and plan.size() == 2)
 	assert(plan[0].type == "card" and plan[1].type == "skill")

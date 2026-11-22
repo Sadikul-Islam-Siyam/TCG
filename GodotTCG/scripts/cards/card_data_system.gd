@@ -28,15 +28,14 @@ const WEAPON_TYPES: PackedStringArray = ["Sword", "Bow", "Claymore", "Polearm", 
 const SKILL_KINDS: PackedStringArray = ["normal", "skill", "burst"]
 const CARD_KINDS: PackedStringArray = ["event", "support", "weapon", "artifact", "talent"]
 
-const DICE_FACES: PackedStringArray = [CRYO, HYDRO, PYRO, ELECTRO, ANEMO, GEO, OMNI]
-## Omni keeps 1/8 chance; the 6 elements share the remaining 7/8 equally (7/48 each).
+const DICE_FACES: PackedStringArray = [HYDRO, PYRO, ELECTRO, ANEMO, GEO, OMNI]
+## Cryo excluded from dice rolls; Omni keeps 1/8 chance and the 5 active elements share 7/8 equally (7/40 each).
 const DICE_WEIGHTS: Array[float] = [
-	7.0 / 48.0,
-	7.0 / 48.0,
-	7.0 / 48.0,
-	7.0 / 48.0,
-	7.0 / 48.0,
-	7.0 / 48.0,
+	7.0 / 40.0,
+	7.0 / 40.0,
+	7.0 / 40.0,
+	7.0 / 40.0,
+	7.0 / 40.0,
 	1.0 / 8.0,
 ]
 
@@ -47,8 +46,8 @@ const MAX_SUMMONS: int = 0
 const MAX_SUPPORTS: int = 0
 const HAND_START: int = 5
 const DRAW_END: int = 2
-const DECK_SIZE: int = 12
-const MAX_COPIES: int = 3
+const DECK_SIZE: int = 20
+const MAX_COPIES: int = 2
 
 ## Reaction definitions from `engine/rules.py:REACTIONS` + Anemo/Geo reactions
 const REACTION_DEFS: Array[Dictionary] = [
@@ -268,6 +267,20 @@ static func describe_skill_steps(steps: Array[EffectStepData]) -> String:
 				parts.append("Heal %d HP." % st.amount)
 			"heal_most_injured":
 				parts.append("Heal most injured ally for %d HP." % st.amount)
+			"heal_all":
+				parts.append("Heal all living allies for %d HP." % st.amount)
+			"heal_dual":
+				parts.append("Heal active character and lowest-HP standby ally for %d HP each." % st.amount)
+			"clear_self_aura":
+				parts.append("Remove elemental aura from self.")
+			"reroll_off_element":
+				parts.append("Reroll non-matching dice.")
+			"swap_cards":
+				parts.append("Swap up to %d cards between hand and deck." % st.amount)
+			"gain_active_dice":
+				parts.append("Gain %d die/dice matching active character's element." % st.amount)
+			"convert_to_omni":
+				parts.append("Convert up to %d dice into Omni Dice." % st.amount)
 			"gain_energy":
 				parts.append("Gain %d Energy." % st.amount)
 			"draw":
@@ -342,10 +355,9 @@ func parse_steps(arr: Array, default_heal_target: bool = false) -> Array[EffectS
 func infer_card_role(cd: CardData) -> String:
 	if not cd.role.is_empty():
 		return cd.role
-	for st in cd.play_steps:
-		if st.op == "heal" or st.op == "heal_most_injured":
-			return "heal"
-	return "buff"
+	if cd.kind in ["weapon", "artifact", "talent"]:
+		return "equipment"
+	return "utility"
 
 
 func load_all_content() -> void:
@@ -408,14 +420,17 @@ func get_card_priorities() -> Dictionary:
 	return pr
 
 
-func starter_deck() -> Array[String]:
+func starter_deck(chars: Array = []) -> Array[String]:
 	load_all_content()
+	var team: Array = chars
+	if team.is_empty() and roster.size() >= 3:
+		team = [roster[0], roster[1], roster[2]]
 	var out: Array[String] = []
 	var names: Array = card_defs.keys()
 	names.sort()
 	for cname in names:
 		var cd: CardData = card_defs[cname]
-		if is_card_allowed_in_deck(cd, []):
+		if is_card_allowed_in_deck(cd, team):
 			for _c in range(MAX_COPIES):
 				out.append(str(cname))
 				if out.size() >= DECK_SIZE:
@@ -424,12 +439,14 @@ func starter_deck() -> Array[String]:
 
 
 func is_card_allowed_in_deck(cd: CardData, chars: Array) -> bool:
-	## Exact port of `engine/deck.py:card_allowed(cd, chars)`.
+	## Exact port of `engine/deck.py:card_allowed(cd, chars)` + character-assigned equipment support.
 	if cd == null:
 		return false
+	if not cd.char_name.is_empty():
+		return chars.has(cd.char_name)
 	if cd.kind == "talent":
 		return chars.has(cd.char_name)
-	if cd.kind == "weapon":
+	if cd.kind == "weapon" and not cd.weapon.is_empty():
 		for c_name in chars:
 			var c_def: CharData = get_char_def(str(c_name))
 			if c_def != null and c_def.weapon == cd.weapon:

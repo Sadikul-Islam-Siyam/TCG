@@ -66,7 +66,7 @@ static func draw_cards(state: TCGGameState, player_idx: int, count: int) -> void
 				))
 
 
-static func begin_round(state: TCGGameState, is_first: bool = false) -> void:
+static func begin_round(state: TCGGameState, is_first: bool = false, carry_omni: Array = []) -> void:
 	## Starts a new round and enters the Roll Phase (`engine/rules.py:_begin_round`).
 	if not is_first:
 		state.add_game_event(GameEvent.make(GameEvent.Type.ROUND_ENDED, state.first_player, -1, "", "", state.round_number))
@@ -91,9 +91,14 @@ static func begin_round(state: TCGGameState, is_first: bool = false) -> void:
 		var p := state.players[pi]
 		var before_dice := p.dice.duplicate()
 		p.dice = roll_dice(state.rng, CardDataSystem.DICE_PER_ROUND)
+		var extra_omni: int = int(carry_omni[pi]) if pi < carry_omni.size() else 0
+		for _eo in range(extra_omni):
+			if p.dice.size() < CardDataSystem.MAX_DICE:
+				p.dice.append(CardDataSystem.OMNI)
 		p.rerolls = 1
 		p.roll_done = false
 		p.ended = false
+		p.heal_card_used = false
 		state.add_game_event(GameEvent.make(
 			GameEvent.Type.DICE_ROLLED,
 			pi,

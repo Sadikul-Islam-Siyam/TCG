@@ -37,6 +37,9 @@ class ActionData extends RefCounted:
 	func with_index(new_index: int) -> ActionData:
 		return ActionData.new(type, player, new_index, target, Array(dice), Array(ids))
 
+	func with_ids(new_ids: Array) -> ActionData:
+		return ActionData.new(type, player, index, target, Array(dice), new_ids)
+
 	func key() -> String:
 		## Canonical key for dictionary/set lookups (used in MCTS & Alpha-Beta shortlisting).
 		return "%s|%d|%d|%d|%s|%s" % [

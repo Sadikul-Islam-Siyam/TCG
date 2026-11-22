@@ -21,6 +21,23 @@ static func payment_ok(dice: Array[String], cost: CardDataSystem.CostData, idx: 
 		seen[i] = true
 	if idx.size() != cost.n + cost.unaligned:
 		return false
+	if cost.n <= 0:
+		return true
+	if cost.element.is_empty():
+		# "N dice of the same type" (Omni counts as wild toward any chosen element)
+		var omni_c: int = 0
+		var elem_counts: Dictionary = {}
+		var best_same: int = 0
+		for raw_i in idx:
+			var d: String = dice[int(raw_i)]
+			if d == CardDataSystem.OMNI:
+				omni_c += 1
+			else:
+				var next_c: int = int(elem_counts.get(d, 0)) + 1
+				elem_counts[d] = next_c
+				if next_c > best_same:
+					best_same = next_c
+		return (best_same + omni_c) >= cost.n
 	var good: int = 0
 	for raw_i in idx:
 		var d: String = dice[int(raw_i)]
@@ -32,9 +49,43 @@ static func payment_ok(dice: Array[String], cost: CardDataSystem.CostData, idx: 
 static func auto_pay(dice: Array[String], cost: CardDataSystem.CostData, keep: Array = []) -> Variant:
 	## Cheapest legal payment (`Array[int]` sorted ascending) or `null` if unaffordable (`engine/dice.py:auto_pay`).
 	## Spends exact-element dice first, Omni last, and prefers elements the player has
-	## no character for (and highest-count duplicates) when paying unaligned costs.
+	## no character for (and highest-count duplicates) when paying unaligned or same-type costs.
 	if cost == null:
 		return []
+	if cost.n > 0 and cost.element.is_empty():
+		# "N dice of the same type": try non-keep elements (highest count first), then keep elements, then Omni-only
+		var el_counts: Dictionary = {}
+		var omni_n: int = 0
+		for d in dice:
+			if d == CardDataSystem.OMNI:
+				omni_n += 1
+			else:
+				el_counts[d] = int(el_counts.get(d, 0)) + 1
+		var keep_map: Dictionary = {}
+		for k_el in keep:
+			keep_map[str(k_el)] = true
+		var cand_els: Array[String] = []
+		for el in el_counts.keys():
+			if int(el_counts[el]) + omni_n >= cost.n:
+				cand_els.append(str(el))
+		cand_els.sort_custom(func(a: String, b: String) -> bool:
+			var ka: int = 1 if keep_map.has(a) else 0
+			var kb: int = 1 if keep_map.has(b) else 0
+			if ka != kb:
+				return ka < kb
+			var ca: int = int(el_counts[a])
+			var cb: int = int(el_counts[b])
+			if ca != cb:
+				return ca > cb
+			return a < b
+		)
+		for el in cand_els:
+			var sub: Variant = auto_pay(dice, CardDataSystem.CostData.new(el, cost.n, cost.unaligned, cost.energy), keep)
+			if sub != null:
+				return sub
+		if omni_n >= cost.n:
+			return auto_pay(dice, CardDataSystem.CostData.new(CardDataSystem.OMNI, cost.n, cost.unaligned, cost.energy), keep)
+		return null
 	var chosen: Array[int] = []
 	var used: Dictionary = {}
 	var need: int = cost.n

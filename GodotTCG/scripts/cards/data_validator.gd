@@ -8,10 +8,13 @@ extends RefCounted
 const VALID_OPS: PackedStringArray = [
 	"damage", "piercing_others", "summon", "combat_status", "char_status",
 	"foe_char_status", "force_switch_foe", "heal", "heal_most_injured",
+	"heal_all", "heal_dual", "clear_self_aura", "reroll_off_element",
+	"swap_cards", "gain_active_dice", "convert_to_omni",
 	"draw", "gain_energy", "gain_dice",
 ]
 const POSITIVE_AMOUNT_OPS: PackedStringArray = [
-	"damage", "piercing_others", "heal", "heal_most_injured", "draw", "gain_energy", "gain_dice",
+	"damage", "piercing_others", "heal", "heal_most_injured", "heal_all", "heal_dual",
+	"swap_cards", "gain_active_dice", "convert_to_omni", "draw", "gain_energy", "gain_dice",
 ]
 
 
@@ -104,8 +107,8 @@ static func validate_all(db: Node) -> Array[String]:
 			errors.append("Card key/name mismatch: '%s' vs '%s'" % [card_name, cd.name])
 		if not db.CARD_KINDS.has(cd.kind):
 			errors.append("%s has invalid kind '%s'" % [cd_label, cd.kind])
-		if not cd.role.is_empty() and not cd.role in ["heal", "buff"]:
-			errors.append("%s has invalid role '%s' (expected 'heal' or 'buff')" % [cd_label, cd.role])
+		if not cd.role.is_empty() and not cd.role in ["equipment", "utility", "heal", "buff"]:
+			errors.append("%s has invalid role '%s' (expected 'equipment' or 'utility')" % [cd_label, cd.role])
 		_validate_cost(db, cd_label, cd.cost, errors)
 		if cd.text.is_empty():
 			errors.append("%s is missing description text" % cd_label)
@@ -114,6 +117,11 @@ static func validate_all(db: Node) -> Array[String]:
 		_validate_steps(db, cd_label, cd.play_steps, errors)
 		_validate_steps(db, cd_label, cd.action_start_steps, errors)
 		_validate_steps(db, cd_label, cd.end_phase_steps, errors)
+		if cd.kind == "weapon":
+			if not cd.char_name.is_empty() and not db.char_defs.has(cd.char_name):
+				errors.append("Equipment %s references unknown character '%s'" % [cd_label, cd.char_name])
+			if not cd.status.is_empty() and not db.status_defs.has(cd.status):
+				errors.append("Equipment %s references unknown status '%s'" % [cd_label, cd.status])
 		if cd.kind == "talent":
 			if not db.char_defs.has(cd.char_name):
 				errors.append("Talent %s references unknown character '%s'" % [cd_label, cd.char_name])

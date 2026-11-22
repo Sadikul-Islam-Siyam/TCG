@@ -1,19 +1,24 @@
 {
   "presets": {
-    "Fire & Lightning": ["Pyro Vanguard", "Electro Ranger", "Geo Guardian"],
-    "Freeze & Shatter": ["Cryo Knight", "Hydro Cleric", "Pyro Vanguard"],
-    "Wind & Stone": ["Anemo Scout", "Geo Guardian", "Hydro Cleric"]
+    "Team Avatar": ["Aang", "Katara", "Toph"],
+    "Fire Nation Royals": ["Zuko", "Azula", "Iroh"],
+    "Lotus & Rebels": ["Iroh", "Zuko", "Toph"]
   },
   "priorities": {
-    "Power Boost": 4,
-    "Iron Guard": 4,
-    "Major Heal": 3,
-    "Tactical Draw": 3,
-    "Energy Charge": 3,
-    "Battle Cry": 2,
-    "Fortify": 2,
-    "Team Tonic": 2,
-    "Minor Heal": 1,
-    "Quick Rally": 1
+    "Aang's Glider Staff": 6,
+    "Katara's Spirit Water": 6,
+    "Zuko's Dual Broadswords": 6,
+    "Azula's Dagger": 6,
+    "Earth Rumble Championship Belt": 6,
+    "Iroh's Pearl-Handled Dagger": 6,
+    "Elemental Dice": 5,
+    "Omni Conversion": 5,
+    "Draw Cards": 4,
+    "Active Character Healing": 4,
+    "Dual Character Healing": 4,
+    "Reroll Dice": 3,
+    "Party Healing": 3,
+    "Dice Carryover": 3,
+    "Swap Cards": 2
   }
 }

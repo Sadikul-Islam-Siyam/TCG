@@ -174,7 +174,7 @@ static func _test_04_hand_fan() -> String:
 	var cards: Array[String] = []
 	var playable: Array[bool] = []
 	for i in range(10):
-		cards.append("Tactical Draw")
+		cards.append("Draw Cards")
 		playable.append(true)
 	hs.setup(cards, playable)
 	var err := ""
@@ -197,7 +197,7 @@ static func _test_04_hand_fan() -> String:
 
 static func _test_05_status_overflow() -> String:
 	var slot := TCGCharacterSlot.new()
-	var ch := TCGPlayerSystem.CharacterInstance.new("Pyro Vanguard", 10, 0)
+	var ch := TCGPlayerSystem.CharacterInstance.new("Zuko", 10, 0)
 	for i in range(10):
 		ch.statuses.append(TCGPlayerSystem.StatusInstance.new("ShieldEffect_%d" % i, 2, -1, 0))
 	slot.setup_character({"side": 0, "index": 0, "state": ch})
@@ -287,7 +287,7 @@ static func _test_08_detail_drawer() -> String:
 	if r.size.x < 320.0 or r.size.x > 460.0:
 		err = "Unexpected DetailDrawer width %.1f" % r.size.x
 	else:
-		dd.open_card("Tactical Draw")
+		dd.open_card("Draw Cards")
 		if not dd.is_open() or dd.get_stack_depth() != 1:
 			err = "DetailDrawer failed to open root card entry"
 		else:

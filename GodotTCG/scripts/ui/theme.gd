@@ -30,7 +30,7 @@ const REACT: Dictionary = {
 	"Superconduct": {"elements": ["Cryo", "Electro"], "desc": "+1 damage, 1 Piercing to others"},
 	"Electro-Charged": {"elements": ["Hydro", "Electro"], "desc": "+1 damage, 1 Piercing to others"},
 	"Frozen": {"elements": ["Cryo", "Hydro"], "desc": "+1 damage, target Frozen"},
-	"Swirl": {"elements": ["Anemo"], "desc": "1 damage to the other characters"},
+	"Swirl": {"elements": ["Anemo"], "desc": "2 damage to the other characters"},
 	"Crystallize": {"elements": ["Geo"], "desc": "+1 damage, shield gained"},
 }
 
@@ -339,6 +339,54 @@ static func draw_plaque(
 	)
 
 
+static func draw_genshin_pill(
+	canvas: CanvasItem,
+	rect: Rect2,
+	label: String,
+	hovered: bool = false,
+	disabled: bool = false,
+	icon_kind: String = "confirm"
+) -> void:
+	## Iconic Genshin Genius Invokation ivory-and-gold pill button (Confirm, Play Card, End Round, etc.).
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var r: int = int(rect.size.y * 0.5)
+	var fill := Color8(242, 234, 214) if not hovered else Color8(255, 249, 232)
+	if disabled:
+		fill = Color8(92, 94, 102)
+	var border := GOLD_L if hovered else (GOLD_D if disabled else GOLD)
+	if hovered and not disabled:
+		draw_rounded_box(canvas, rect.grow(3.0), Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, 0.18), Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, 0.55), r + 2, 1)
+	draw_rounded_box(canvas, rect, fill, border, r, 2, Vector2(0, 3), 105)
+	var inner := rect.grow(-3.0)
+	if inner.size.x > 6.0 and inner.size.y > 6.0:
+		var isb := StyleBoxFlat.new()
+		isb.bg_color = Color(0, 0, 0, 0)
+		isb.border_color = Color(GOLD_D.r, GOLD_D.g, GOLD_D.b, 0.45 if not disabled else 0.25)
+		isb.set_border_width_all(1)
+		isb.set_corner_radius_all(maxi(4, r - 3))
+		canvas.draw_style_box(isb, inner)
+
+	var text_cx := rect.get_center().x
+	if not icon_kind.is_empty() and rect.size.x >= 130.0:
+		var ic := Vector2(rect.position.x + rect.size.y * 0.52, rect.get_center().y)
+		var ir := rect.size.y * 0.30
+		var badge_bg := Color8(48, 52, 62) if not disabled else Color8(62, 64, 70)
+		canvas.draw_circle(ic, ir, badge_bg)
+		canvas.draw_arc(ic, ir, 0.0, TAU, 20, GOLD_L if not disabled else DIM, 1.6)
+		if icon_kind == "cancel":
+			var d := ir * 0.42
+			canvas.draw_line(ic + Vector2(-d, -d), ic + Vector2(d, d), RED, 2.0)
+			canvas.draw_line(ic + Vector2(d, -d), ic + Vector2(-d, d), RED, 2.0)
+		else:
+			canvas.draw_circle(ic, ir * 0.44, GOLD_L if not disabled else DIM)
+		text_cx = rect.get_center().x + 10.0
+
+	var txt_col := Color8(46, 38, 30) if not disabled else Color8(186, 190, 198)
+	var fsz := fit_font_size(label, rect.size.x - 46.0, 17 if rect.size.y >= 46.0 else 14, 12, true)
+	draw_text_centered(canvas, label, Vector2(text_cx, rect.get_center().y), fsz, txt_col, true, false)
+
+
 static func draw_text_pos(
 	canvas: CanvasItem,
 	txt: String,
@@ -396,7 +444,7 @@ static func draw_text_centered(
 ) -> void:
 	if txt.is_empty():
 		return
-	var f: Font = ThemeDB.fallback_font
+	var f: Font = get_display_font() if bold else get_body_font()
 	var str_size: Vector2 = f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
 	var pos := Vector2(center.x - str_size.x * 0.5, center.y - str_size.y * 0.5 - 1.0)
 	draw_text_pos(canvas, txt, pos, size, col, bold, shadow)
@@ -413,7 +461,7 @@ static func draw_text_right(
 ) -> void:
 	if txt.is_empty():
 		return
-	var f: Font = ThemeDB.fallback_font
+	var f: Font = get_display_font() if bold else get_body_font()
 	var str_size: Vector2 = f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
 	var pos := Vector2(top_right.x - str_size.x, top_right.y)
 	draw_text_pos(canvas, txt, pos, size, col, bold, shadow)
@@ -428,7 +476,7 @@ static func draw_wrapped(
 	line_h: int = 17,
 	shadow: bool = false
 ) -> int:
-	var f: Font = ThemeDB.fallback_font
+	var f: Font = get_body_font()
 	var y: float = rect.position.y
 	for para in txt.split("\n"):
 		var words: PackedStringArray = para.split(" ", false)
@@ -461,41 +509,39 @@ static func draw_reaction_pill(
 		return
 	var a: float = clampf(alpha, 0.0, 1.0)
 	var title_upper := title.to_upper()
-	var f: Font = ThemeDB.fallback_font
-	var tw: float = f.get_string_size(title_upper, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
-	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	var f_disp: Font = get_display_font()
+	var f_body: Font = get_body_font()
+	var tw: float = f_disp.get_string_size(title_upper, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+	var sw: float = f_body.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
 	var n_els: int = elements.size()
-	var w: float = maxf(210.0, maxf(tw + 76.0 + float(n_els) * 22.0, sw + 48.0 + float(n_els) * 22.0))
-	var h: float = 60.0
+	var w: float = maxf(188.0, maxf(tw + 64.0 + float(n_els) * 24.0, sw + 44.0 + float(n_els) * 24.0))
+	var h: float = 48.0 if not sub.is_empty() else 36.0
 	var rect := Rect2(center.x - w * 0.5, center.y - h * 0.5, w, h)
 
 	draw_rounded_box(
 		canvas,
 		rect,
-		Color(0.10, 0.08, 0.06, 0.94 * a),
-		Color(GOLD.r, GOLD.g, GOLD.b, a),
-		14,
+		Color(0.06, 0.08, 0.13, 0.90 * a),
+		Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, 0.92 * a),
+		int(h * 0.5),
 		2,
 		Vector2(0, 3),
-		int(90.0 * a)
+		int(85.0 * a)
 	)
 
-	# Element gems on left
-	var gx: float = rect.position.x + 24.0
+	var gx: float = rect.position.x + 22.0
 	for el_raw in elements:
 		var el := String(el_raw)
-		var c_pt := Vector2(gx, center.y)
-		var gem_col := elem_color(el)
-		canvas.draw_circle(c_pt, 10.0, Color(gem_col.r, gem_col.g, gem_col.b, a))
-		canvas.draw_arc(c_pt, 10.0, 0.0, TAU, 16, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), 1.5)
+		var ec := elem_color(el)
+		TCGArt.draw_elem_symbol(canvas, el, Vector2(gx, center.y), 9.5, Color(ec.r, ec.g, ec.b, a), false)
 		gx += 22.0
 
-	var text_cx: float = (rect.position.x + gx + w - 20.0) * 0.5
+	var text_cx: float = (gx + rect.end.x - 14.0) * 0.5
 	if not sub.is_empty():
-		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y - 10.0), 19, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
-		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 12.0), 14, Color(TEXT.r, TEXT.g, TEXT.b, a), false, false)
+		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y - 8.0), 17, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, true)
+		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 10.0), 12, Color(TEXT.r, TEXT.g, TEXT.b, 0.92 * a), false, false)
 	else:
-		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y), 20, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, false)
+		draw_text_centered(canvas, title_upper, Vector2(text_cx, center.y), 17, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), true, true)
 
 
 static func draw_action_ribbon(
@@ -504,39 +550,51 @@ static func draw_action_ribbon(
 	sub: String,
 	accent_col: Color,
 	center: Vector2,
-	alpha: float = 1.0
+	alpha: float = 1.0,
+	char_name: String = "",
+	align_right: bool = false
 ) -> void:
+	## Genshin-style side-mounted Skill/Switch Banner with circular character portrait medallion.
 	if alpha <= 0.01:
 		return
 	var a: float = clampf(alpha, 0.0, 1.0)
-	var f: Font = ThemeDB.fallback_font
-	var tw: float = f.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
-	var sw: float = f.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-	var w: float = maxf(430.0, maxf(tw, sw) + 92.0)
-	var h: float = 64.0
+	var f_disp: Font = get_display_font()
+	var f_body: Font = get_body_font()
+	var tw: float = f_disp.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+	var sw: float = f_body.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	var w: float = maxf(310.0, maxf(tw, sw) + 96.0)
+	var h: float = 58.0
 	var rect := Rect2(center.x - w * 0.5, center.y - h * 0.5, w, h)
 
 	draw_rounded_box(
 		canvas,
 		rect,
-		Color(0.12, 0.14, 0.18, 0.95 * a),
-		Color(GOLD_D.r, GOLD_D.g, GOLD_D.b, a),
-		12,
+		Color(0.06, 0.09, 0.14, 0.92 * a),
+		Color(accent_col.r, accent_col.g, accent_col.b, 0.85 * a),
+		29,
 		2,
 		Vector2(0, 4),
-		int(100.0 * a)
+		int(95.0 * a)
 	)
 
-	# Left colored accent bar
-	var bar_rect := Rect2(rect.position.x + 8.0, rect.position.y + 8.0, 8.0, h - 16.0)
-	canvas.draw_rect(bar_rect, Color(accent_col.r, accent_col.g, accent_col.b, a))
-
-	var text_cx: float = center.x + 6.0
-	if not sub.is_empty():
-		draw_text_centered(canvas, title, Vector2(text_cx, center.y - 11.0), 21, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
-		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 12.0), 14, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), false, false)
+	var av_c := Vector2(rect.end.x - 31.0 if align_right else rect.position.x + 31.0, center.y)
+	var av_r := 22.0
+	canvas.draw_circle(av_c, av_r, Color(0.08, 0.11, 0.17, a))
+	var ch_tex := TCGArt.get_character_texture(char_name) if not char_name.is_empty() else null
+	if ch_tex != null:
+		var pr := Rect2(av_c - Vector2(av_r - 3.0, av_r - 3.0), Vector2((av_r - 3.0) * 2.0, (av_r - 3.0) * 2.0))
+		TCGArt.draw_texture_cover(canvas, ch_tex, pr, Color(1, 1, 1, a), 0.16)
+		canvas.draw_arc(av_c, av_r - 1.5, 0.0, TAU, 28, Color(0.06, 0.09, 0.14, 0.96 * a), 4.0)
 	else:
-		draw_text_centered(canvas, title, Vector2(text_cx, center.y), 22, Color(TEXT.r, TEXT.g, TEXT.b, a), true, false)
+		canvas.draw_circle(av_c, av_r * 0.55, Color(accent_col.r, accent_col.g, accent_col.b, 0.78 * a))
+	canvas.draw_arc(av_c, av_r, 0.0, TAU, 28, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, a), 2.2)
+
+	var text_cx: float = (rect.position.x + 18.0 + av_c.x - av_r - 10.0) * 0.5 if align_right else (av_c.x + av_r + 12.0 + rect.end.x - 18.0) * 0.5
+	if not sub.is_empty():
+		draw_text_centered(canvas, title, Vector2(text_cx, center.y - 10.0), 19, Color(TEXT.r, TEXT.g, TEXT.b, a), true, true)
+		draw_text_centered(canvas, sub, Vector2(text_cx, center.y + 11.0), 13, Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, 0.92 * a), false, false)
+	else:
+		draw_text_centered(canvas, title, Vector2(text_cx, center.y), 19, Color(TEXT.r, TEXT.g, TEXT.b, a), true, true)
 
 
 static func draw_phase_announcement(
@@ -544,22 +602,41 @@ static func draw_phase_announcement(
 	title: String,
 	sub: String,
 	title_col: Color,
-	center_y: float = 350.0,
+	center_y: float = 540.0,
 	alpha: float = 1.0
 ) -> void:
+	## Sleek Genshin horizontal translucent center ribbon with tapered edges & gold hairlines.
 	if alpha <= 0.01:
 		return
 	var a: float = clampf(alpha, 0.0, 1.0)
-	var band_h: float = 104.0
-	var band := Rect2(0.0, center_y - band_h * 0.5, float(W), band_h)
-	canvas.draw_rect(band, Color(0.04, 0.06, 0.09, 0.85 * a))
-	canvas.draw_line(Vector2(0.0, band.position.y), Vector2(float(W), band.position.y), Color(GOLD.r, GOLD.g, GOLD.b, a), 2.0)
-	canvas.draw_line(Vector2(0.0, band.end.y), Vector2(float(W), band.end.y), Color(GOLD.r, GOLD.g, GOLD.b, a), 2.0)
+	var band_h: float = 68.0 if not sub.is_empty() else 52.0
+	var cx := float(W) * 0.5
+	# Tapered horizontal segments for soft edge fade
+	var segs: Array[Array] = [
+		[1100.0, 0.78],
+		[1460.0, 0.42],
+		[1780.0, 0.16],
+	]
+	for sg in segs:
+		var sw: float = float(sg[0])
+		var sa: float = float(sg[1]) * a
+		canvas.draw_rect(Rect2(cx - sw * 0.5, center_y - band_h * 0.5, sw, band_h), Color(0.05, 0.08, 0.13, sa))
+
+	var line_w: float = 960.0
+	var gcol := Color(GOLD_L.r, GOLD_L.g, GOLD_L.b, 0.78 * a)
+	canvas.draw_line(Vector2(cx - line_w * 0.5, center_y - band_h * 0.5), Vector2(cx + line_w * 0.5, center_y - band_h * 0.5), gcol, 1.5)
+	canvas.draw_line(Vector2(cx - line_w * 0.5, center_y + band_h * 0.5), Vector2(cx + line_w * 0.5, center_y + band_h * 0.5), gcol, 1.5)
+	# Small diamond end ornaments
+	for sx in [cx - line_w * 0.5, cx + line_w * 0.5]:
+		for sy in [center_y - band_h * 0.5, center_y + band_h * 0.5]:
+			canvas.draw_colored_polygon(PackedVector2Array([
+				Vector2(sx, sy - 3.5), Vector2(sx + 3.5, sy), Vector2(sx, sy + 3.5), Vector2(sx - 3.5, sy)
+			]), gcol)
 
 	if not sub.is_empty():
-		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y - 14.0), 38, Color(title_col.r, title_col.g, title_col.b, a), true, true)
-		draw_text_centered(canvas, sub, Vector2(float(W) * 0.5, center_y + 24.0), 17, Color(TEXT.r, TEXT.g, TEXT.b, a), false, true)
+		draw_text_centered(canvas, title, Vector2(cx, center_y - 10.0), 27, Color(title_col.r, title_col.g, title_col.b, a), true, true)
+		draw_text_centered(canvas, sub, Vector2(cx, center_y + 16.0), 14, Color(TEXT.r, TEXT.g, TEXT.b, 0.92 * a), false, true)
 	else:
-		draw_text_centered(canvas, title, Vector2(float(W) * 0.5, center_y), 40, Color(title_col.r, title_col.g, title_col.b, a), true, true)
+		draw_text_centered(canvas, title, Vector2(cx, center_y), 28, Color(title_col.r, title_col.g, title_col.b, a), true, true)
 
 

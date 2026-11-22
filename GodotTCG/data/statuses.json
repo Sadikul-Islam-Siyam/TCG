@@ -13,6 +13,12 @@
       "duration": 1
     },
     {
+      "name": "Stunned",
+      "text": "Cannot act until End Phase.",
+      "usages": -1,
+      "duration": 1
+    },
+    {
       "name": "Crystallize Shield",
       "text": "Blocks 1 damage to your active character (max 2).",
       "shield": 1,
@@ -38,52 +44,28 @@
     },
     {
       "name": "Attack +1",
-      "text": "This round, your Normal Attack, Skill, and Ult deal +1 DMG.",
+      "text": "This round, your team's Normal Attack, Skill, and Ultimate deal +1 DMG.",
       "duration": 1,
       "outgoing_rule": "bonus_any_1"
     },
     {
-      "name": "Attack +2",
-      "text": "This round, your Normal Attack, Skill, and Ult deal +2 DMG.",
-      "duration": 1,
-      "outgoing_rule": "bonus_any_2"
+      "name": "Equip +1 DMG",
+      "text": "Equipped character deals +1 DMG with Normal Attack, Skill, and Ultimate.",
+      "usages": -1,
+      "duration": -1,
+      "outgoing_rule": "bonus_any_1"
     },
     {
-      "name": "Normal Boost +1",
-      "text": "This round, Normal Attacks deal +1 DMG.",
-      "duration": 1,
-      "outgoing_rule": "bonus_normal_1"
+      "name": "Spirit Water",
+      "text": "Katara's Ultimate heals +2 additional HP to each living party member.",
+      "usages": -1,
+      "duration": -1
     },
     {
-      "name": "Skill Boost +2",
-      "text": "This round, Skills deal +2 DMG.",
-      "duration": 1,
-      "outgoing_rule": "bonus_skill_2"
-    },
-    {
-      "name": "Ult Boost +2",
-      "text": "This round, Ults deal +2 DMG.",
-      "duration": 1,
-      "outgoing_rule": "bonus_burst_2"
-    },
-    {
-      "name": "Next Attack +1",
-      "text": "Your next Normal Attack, Skill, or Ult deals +1 DMG.",
+      "name": "Dice Carryover",
+      "text": "At End Phase, carry remaining unused dice into the next round as Omni Dice.",
       "usages": 1,
-      "outgoing_rule": "bonus_next_any_1"
-    },
-    {
-      "name": "Next Attack +2",
-      "text": "Your next Normal Attack, Skill, or Ult deals +2 DMG.",
-      "usages": 1,
-      "outgoing_rule": "bonus_next_any_2"
-    },
-    {
-      "name": "Guard Stance",
-      "text": "Reduces incoming DMG to active character by 1 (2 uses).",
-      "usages": 2,
-      "reduce": 1,
-      "reduce_min": 1
+      "duration": 1
     }
   ]
 }
