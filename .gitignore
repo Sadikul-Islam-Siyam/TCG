@@ -1,0 +1,10 @@
+# Build outputs & large standalone executables (upload via GitHub Releases instead)
+build/
+*.exe
+*.pck
+
+# Local IDE / reference media
+.idea/
+.deck_build/
+*.mp4
+spash arts/

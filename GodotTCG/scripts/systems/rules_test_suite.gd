@@ -616,6 +616,20 @@ static func _test_azula_ult_stun() -> String:
 	TCGRulesEngine.apply_action(s, TCGGameState.ActionData.new("end_round", 0))
 	if TCGRulesEngine.has_status(foe, "Stunned"):
 		return "Stunned should expire at End Phase"
+
+	# Azula Ult triggering Overloaded (Pyro + Electro -> force switch) MUST stun the original hit character (index 0), NOT the switched-in character (index 1)!
+	var s_ov := _start(["Azula", "Zuko", "Iroh"], ["Katara", "Toph", "Aang"])
+	s_ov.players[1].characters[0].aura = CardDataSystem.PYRO
+	s_ov.players[0].characters[0].energy = 1
+	TCGRulesEngine.apply_action(s_ov, _find_skill_action(s_ov, 2))
+	var hit_char := s_ov.players[1].characters[0]
+	var switched_in := s_ov.players[1].characters[1]
+	if s_ov.players[1].active != 1:
+		return "Azula Ult on Pyro aura should trigger Overloaded and force switch to index 1"
+	if hit_char.hp != 5 or not TCGRulesEngine.has_status(hit_char, "Stunned"):
+		return "Azula Ult + Overloaded must deal 5 DMG and stun the original hit character (Katara), not the switched-in ally"
+	if TCGRulesEngine.has_status(switched_in, "Stunned"):
+		return "Azula Ult + Overloaded must NOT stun the newly switched-in character (Toph)"
 	return ""
 
 

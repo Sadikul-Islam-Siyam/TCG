@@ -1041,23 +1041,23 @@ func _present_events(events: Array) -> void:
 				if pname == "action":
 					_banners.append({
 						"title": "Action Phase",
-						"sub": "Take turns. Declare End Round when you are done.",
+						"sub": "",
 						"color": TCGTheme.GOLD,
 						"y": banner_y,
 						"t": 0.0,
-						"dur": 1.65,
+						"dur": 1.45,
 					})
-					_busy_timer = maxf(_busy_timer, 0.70)
+					_busy_timer = maxf(_busy_timer, 0.65)
 				elif pname == "end":
 					_banners.append({
 						"title": "End Phase",
-						"sub": "Statuses update, then both players draw 2 cards",
+						"sub": "",
 						"color": TCGTheme.GOLD,
 						"y": banner_y,
 						"t": 0.0,
-						"dur": 1.65,
+						"dur": 1.45,
 					})
-					_busy_timer = maxf(_busy_timer, 0.80)
+					_busy_timer = maxf(_busy_timer, 0.70)
 			"round":
 				var rnum: int = int(ev.get("number", 1))
 				_roll_stage_t = 0.0
@@ -1184,7 +1184,6 @@ func begin_payment(
 		"card_index": action.index,
 		"selected_dice": preselected,
 	}
-	show_toast("Confirm dice to spend (or click dice to change selection)", TCGTheme.GOLD_L, 2.0)
 	sync_from_state()
 	return true
 
@@ -1667,7 +1666,8 @@ func sync_from_state() -> void:
 		in_mulligan,
 		_hotseat_cover >= 0,
 		int(drag_state.get("hand_index", -1)),
-		is_my_turn() and game_state.phase == "action" and not in_mulligan and card_swap_pending.is_empty()
+		is_my_turn() and game_state.phase == "action" and not in_mulligan and card_swap_pending.is_empty(),
+		not card_swap_pending.is_empty()
 	)
 
 	# 8. Update Battle Log
@@ -1765,15 +1765,18 @@ func _process(delta: float) -> void:
 			and _hover_mouse_pos.x <= _hand_target_pos.x + hand_strip.size.x + 24.0
 		)
 		var hand_engaged: bool = (
-			in_mull_p
-			or not card_swap_pending.is_empty()
-			or selected_hand_index >= 0
-			or not drag_state.is_empty()
-			or hand_strip.is_engaged()
-			or near_bottom
-			or not is_inside_tree()
+			pay_pending.is_empty()
+			and (
+				in_mull_p
+				or not card_swap_pending.is_empty()
+				or selected_hand_index >= 0
+				or not drag_state.is_empty()
+				or hand_strip.is_engaged()
+				or near_bottom
+				or not is_inside_tree()
+			)
 		)
-		var target_tuck: float = 0.0 if hand_engaged else 64.0
+		var target_tuck: float = 112.0 if (not pay_pending.is_empty() and is_inside_tree()) else (0.0 if hand_engaged else 64.0)
 		_hand_tuck_y = lerpf(_hand_tuck_y, target_tuck, k_pos)
 		var desired_hand_pos := _hand_target_pos + Vector2(0.0, _hand_tuck_y)
 		if not hand_strip.position.is_equal_approx(desired_hand_pos):
@@ -1959,7 +1962,7 @@ func _on_hand_card_long_pressed(_hand_idx: int, c_name: String) -> void:
 
 
 func _on_hand_card_drag_started(hand_idx: int, c_name: String, global_pos: Vector2) -> void:
-	if _is_ui_modal_blocking() or is_mulligan_stage() or _is_gameplay_locked():
+	if _is_ui_modal_blocking() or is_mulligan_stage() or not card_swap_pending.is_empty() or _is_gameplay_locked():
 		return
 	if not is_my_turn() or game_state.phase != "action" or not game_state.pending.is_empty():
 		if hand_strip != null:
@@ -2338,7 +2341,7 @@ func _pay_die_rect(idx: int) -> Rect2:
 
 func _pay_cancel_rect() -> Rect2:
 	var safe: Rect2 = _ensure_lay()["safe"]
-	return Rect2(safe.end.x - 58.0, safe.position.y + 8.0, 48.0, 48.0)
+	return Rect2(safe.end.x - 122.0, safe.position.y + 8.0, 48.0, 48.0)
 
 
 func _pay_confirm_rect() -> Rect2:
@@ -2686,11 +2689,13 @@ func _input(event: InputEvent) -> void:
 			queue_redraw()
 		elif _end_phase_rect().has_point(pos):
 			if is_my_turn() and game_state != null and game_state.phase == "action" and game_state.pending.is_empty():
-				_end_round_confirm_open = true
-				if is_inside_tree() and AudioManager != null:
-					AudioManager.play_sfx("ui_click")
-				show_toast("Click End Round again to confirm", TCGTheme.GOLD_L, 2.0)
-				queue_redraw()
+				if not confirm_before_end_round:
+					execute_action(TCGGameState.ActionData.new("end_round", view_player))
+				else:
+					_end_round_confirm_open = true
+					if is_inside_tree() and AudioManager != null:
+						AudioManager.play_sfx("ui_click")
+					queue_redraw()
 			else:
 				show_toast("You can only End Round on your turn in Action Phase", TCGTheme.RED)
 			if vp != null:
@@ -3688,9 +3693,8 @@ func _draw_payment_modal(c: CanvasItem, w: float, h: float) -> void:
 	c.draw_style_box(isb, inner_r)
 
 	var drawer_hdr := "Select 1 Die" if is_tune else ("Elemental Dice (%d/%d)" % [sel_dice.size(), total_needed])
-	TCGTheme.draw_text_centered(c, drawer_hdr, Vector2(right.get_center().x, right.position.y + 24.0), 16, TCGTheme.GOLD_L, true, true)
-	TCGTheme.draw_text_centered(c, "Click dice to toggle", Vector2(right.get_center().x, right.position.y + 46.0), 12, Color8(226, 214, 190), false, false)
-	c.draw_line(Vector2(right.position.x + 18.0, right.position.y + 62.0), Vector2(right.end.x - 18.0, right.position.y + 62.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.45), 1.0)
+	TCGTheme.draw_text_centered(c, drawer_hdr, Vector2(right.get_center().x, right.position.y + 30.0), 16, TCGTheme.GOLD_L, true, true)
+	c.draw_line(Vector2(right.position.x + 18.0, right.position.y + 54.0), Vector2(right.end.x - 18.0, right.position.y + 54.0), Color(TCGTheme.GOLD.r, TCGTheme.GOLD.g, TCGTheme.GOLD.b, 0.45), 1.0)
 
 	var elig_tune := tunable_dice(view_player)
 	for i in range(p.dice.size()):
@@ -3969,7 +3973,6 @@ func _draw_game_over_overlay(c: CanvasItem, w: float, h: float) -> void:
 		Vector2(center.x, div_y - 5.0), Vector2(center.x + 5.0, div_y), Vector2(center.x, div_y + 5.0), Vector2(center.x - 5.0, div_y)
 	]), glow_col)
 
-	TCGTheme.draw_text_centered(c, "Press [R] for Rematch   ·   [Esc] Main Menu", Vector2(center.x, center.y + 8.0), 16, TCGTheme.DIM, false, true)
 	TCGTheme.draw_genshin_pill(c, _game_over_rect(0), "Rematch", _over_hover_idx == 0, false, "confirm")
 	TCGTheme.draw_genshin_pill(c, _game_over_rect(1), "Main Menu", _over_hover_idx == 1, false, "cancel")
 

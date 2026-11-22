@@ -7,12 +7,14 @@ extends RefCounted
 var s: TCGGameState
 var pi: int
 var kind: String = ""   # "" corresponds to Python `None`; otherwise "normal" | "skill" | "burst"
+var last_damage_target: int = -1
 
 
 func _init(p_state: TCGGameState, p_pi: int, p_kind: String = "") -> void:
 	s = p_state
 	pi = p_pi
 	kind = p_kind
+	last_damage_target = -1
 
 
 func me() -> TCGPlayerSystem.PlayerState:
@@ -26,6 +28,7 @@ func foe() -> TCGPlayerSystem.PlayerState:
 func damage(n: int, dtype: String) -> void:
 	var t: int = TCGRulesEngine.foe_target(s, pi)
 	if t >= 0:
+		last_damage_target = t
 		var src: String = "skill" if not kind.is_empty() else "effect"
 		TCGRulesEngine.deal_damage(s, pi, 1 - pi, t, n, dtype, src, kind)
 
@@ -98,9 +101,17 @@ func char_status(status_name: String, idx: int = -1) -> void:
 
 
 func foe_char_status(status_name: String) -> void:
-	var t: int = TCGRulesEngine.foe_target(s, pi)
-	if t >= 0:
-		var st := TCGRulesEngine.add_status(foe().characters[t].statuses, status_name)
+	## Applies status to the exact character struck by the preceding damage step (even if Overloaded forced a switch!),
+	## or falls back to the current active enemy when no damage step preceded this.
+	var f := foe()
+	var t: int = -1
+	if last_damage_target >= 0 and last_damage_target < f.characters.size():
+		if not f.characters[last_damage_target].defeated:
+			t = last_damage_target
+	else:
+		t = TCGRulesEngine.foe_target(s, pi)
+	if t >= 0 and not f.characters[t].defeated:
+		var st := TCGRulesEngine.add_status(f.characters[t].statuses, status_name)
 		if st != null:
 			s.add_game_event(GameEvent.make(GameEvent.Type.STATUS_ADDED, 1 - pi, t, status_name, "", st.usages, null, st.usages, "char"))
 
@@ -250,10 +261,15 @@ func swap_cards(max_count: int, chosen_ids: Array = []) -> void:
 		if not pick_set.has(i):
 			new_hand.append(p.hand[i])
 	p.hand = new_hand
+	var to_draw: int = out.size()
+	var avail: int = mini(to_draw, p.deck.size())
+	if avail > 0:
+		TCGRoundManager.draw_cards(s, pi, avail)
 	for c in out:
 		p.deck.append(c)
 	TCGRoundManager.shuffle_strings(s.rng, p.deck)
-	TCGRoundManager.draw_cards(s, pi, out.size())
+	if to_draw > avail:
+		TCGRoundManager.draw_cards(s, pi, to_draw - avail)
 
 
 func gain_active_dice(n: int) -> void:

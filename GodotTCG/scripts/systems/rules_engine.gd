@@ -725,10 +725,16 @@ static func _mulligan(s: TCGGameState, a: TCGGameState.ActionData) -> bool:
 		if not uniq_set.has(i):
 			new_hand.append(p.hand[i])
 	p.hand = new_hand
+	# Draw replacements BEFORE returning switched cards to the deck so you never immediately redraw what you switched out
+	var to_draw: int = out.size()
+	var avail: int = mini(to_draw, p.deck.size())
+	if avail > 0:
+		TCGRoundManager.draw_cards(s, a.player, avail)
 	for c in out:
 		p.deck.append(c)
 	TCGRoundManager.shuffle_strings(s.rng, p.deck)
-	TCGRoundManager.draw_cards(s, a.player, out.size())
+	if to_draw > avail:
+		TCGRoundManager.draw_cards(s, a.player, to_draw - avail)
 	p.mull_done = true
 	return true
 

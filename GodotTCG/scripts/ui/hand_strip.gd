@@ -29,6 +29,7 @@ var _target_rotations: Array[float] = []
 var _target_scales: Array[Vector2] = []
 var _draw_origin_local: Vector2 = Vector2(-180.0, 20.0)
 var _dim_unplayable: bool = false
+var _swap_select_mode: bool = false
 
 
 func _init() -> void:
@@ -59,7 +60,8 @@ func setup(
 	p_mulligan: bool = false,
 	p_hidden: bool = false,
 	p_dragged_idx: int = -1,
-	p_dim_unplayable: bool = false
+	p_dim_unplayable: bool = false,
+	p_swap_select_mode: bool = false
 ) -> void:
 	var prev_count: int = hand_cards.size()
 	hand_cards = p_cards.duplicate()
@@ -70,6 +72,7 @@ func setup(
 	hidden_hand = p_hidden
 	dragged_index = p_dragged_idx
 	_dim_unplayable = p_dim_unplayable
+	_swap_select_mode = p_swap_select_mode or p_mulligan
 
 	var newly_added: Array[int] = []
 	if hand_cards.size() > prev_count and prev_count > 0:
@@ -131,6 +134,7 @@ func _rebuild_cards() -> void:
 		cv.size = dims
 		cv.pivot_offset = dims * 0.5
 		cv.interaction_locked = busy_locked
+		cv.allow_drag = not _swap_select_mode
 		var is_play: bool = playable_flags[i] if i < playable_flags.size() else true
 		var is_sel: bool = (i == selected_hand_index)
 		var is_swap: bool = swap_indices.has(i)

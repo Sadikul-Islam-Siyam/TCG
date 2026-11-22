@@ -20,6 +20,7 @@ var dim_unusable: bool = false
 var hidden_back: bool = false
 var large_mode: bool = false
 var interaction_locked: bool = false
+var allow_drag: bool = true
 
 var _hovered: bool = false
 var _pressing: bool = false
@@ -107,13 +108,14 @@ func _notification(what: int) -> void:
 		card_hovered.emit(card_name, hand_index, true)
 		queue_redraw()
 	elif what == NOTIFICATION_MOUSE_EXIT:
-		if _pressing and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not hidden_back and not interaction_locked:
+		if _pressing and allow_drag and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not hidden_back and not interaction_locked:
 			_pressing = false
 			var drag_pos: Vector2 = get_global_mouse_position() if is_inside_tree() else (global_position + size * 0.5)
 			card_drag_started.emit(card_name, hand_index, drag_pos)
 			return
 		_hovered = false
-		_pressing = false
+		if allow_drag:
+			_pressing = false
 		card_hovered.emit(card_name, hand_index, false)
 		queue_redraw()
 
@@ -137,9 +139,9 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			card_right_clicked.emit(card_name, hand_index)
 			accept_event()
-	elif event is InputEventMouseMotion and _pressing and not interaction_locked:
+	elif event is InputEventMouseMotion and _pressing and allow_drag and not interaction_locked:
 		var mm := event as InputEventMouseMotion
-		if mm.position.distance_to(_press_pos) > 8.0:
+		if mm.position.distance_to(_press_pos) > 12.0:
 			_pressing = false
 			if not hidden_back:
 				var drag_pos: Vector2 = get_global_mouse_position() if is_inside_tree() else (global_position + mm.position)
