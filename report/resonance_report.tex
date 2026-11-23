@@ -181,7 +181,7 @@
 \vfill
 
 \begin{center}
-  {\small\color{slate}\textbf{Date of Submission:} 23 November 2026}
+  {\small\color{slate}\textbf{Date of Submission:} 24 November 2026}
 \end{center}
 \vspace{0.4cm}
 \end{minipage}
@@ -212,7 +212,7 @@
 
 In classical turn-based games such as Chess or WordBattle, every state transition is deterministic and both players observe the entire board. In a tactical collectible card game (TCG), however, every move simultaneously manages multiple coupled uncertainties: the opponent holds hidden cards in hand, both players draw from shuffled decks, every round begins with a random pool of elemental dice, and a single turn may chain several \emph{fast} preparation cards before ending with a \emph{combat} attack or character switch. Choosing a move that deals high immediate damage can leave a character exposed to a devastating elemental reaction on the opponent's very next reply.
 
-\textbf{Resonance: Genius Invokation TCG (Avatar Edition)} was developed to study how multiple classical and modern Artificial Intelligence techniques cooperate inside a single, complete, playable tabletop game. Rather than relying on one monolithic heuristic, our engine combines six complementary AI paradigms—\emph{Fuzzy Logic}, \emph{A* Search}, \emph{Alpha-Beta Minimax}, \emph{Information-Set MCTS}, \emph{Imperfect-Information Determinization}, and \emph{Constraint Satisfaction}—backed by a deterministic, data-driven rules engine in Godot~4.
+\textbf{Resonance} was developed to study how multiple classical and modern Artificial Intelligence techniques cooperate inside a single, complete, playable tabletop game. The underlying gameplay framework is inspired by the tactical card game \emph{Genius Invokation TCG} within \emph{Genshin Impact}~\cite{hoyoverse}, adapted into the \emph{Avatar: The Last Airbender} universe with a custom bender roster, dedicated elemental reactions, and a from-scratch Godot~4 rules engine. Rather than relying on one monolithic heuristic, our engine combines six complementary AI paradigms—\emph{Fuzzy Logic}, \emph{A* Search}, \emph{Alpha-Beta Minimax}, \emph{Information-Set MCTS}, \emph{Imperfect-Information Determinization}, and \emph{Constraint Satisfaction}—backed by a deterministic, data-driven rules engine in Godot~4.
 
 % ==============================================================================
 % SECTION 2: GAME OVERVIEW
@@ -1237,7 +1237,7 @@ Payment Cancel (\texttt{X}) overlapped Settings button & Repositioned \texttt{\_
 \noindent
 \begin{minipage}[t]{0.475\textwidth}
 \textbf{Limitations}
-\begin{itemize}[leftmargin=1.2em, itemsep=1pt, topsep=2pt]
+\begin{itemize}[leftmargin=1.2em, itemsep=0pt, topsep=1pt]
   \item Fuzzy rule outputs and evaluation weights were tuned by hand rather than learned from self-play.
   \item Aura vulnerability in \texttt{TCGEvaluate} checks core aura-to-aura reactions (\emph{Vaporize}, \emph{Overloaded}, \emph{Electro-Charged}), omitting \emph{Swirl} and \emph{Crystallize} threat penalties.
   \item IS-MCTS samples opponent hands uniformly from legal deck cards rather than updating a Bayesian belief from played cards.
@@ -1247,7 +1247,7 @@ Payment Cancel (\texttt{X}) overlapped Settings button & Repositioned \texttt{\_
 \end{minipage}\hfill
 \begin{minipage}[t]{0.475\textwidth}
 \textbf{Future Work}
-\begin{itemize}[leftmargin=1.2em, itemsep=1pt, topsep=2pt]
+\begin{itemize}[leftmargin=1.2em, itemsep=0pt, topsep=1pt]
   \item Optimize evaluation and Fuzzy parameters automatically via evolutionary self-play or temporal-difference learning.
   \item Add Zobrist hashing and a transposition table to Alpha-Beta to reach depth 5--6 within the same 0.6~s budget.
   \item Upgrade IS-MCTS determinization to track observed opponent cards and narrow the legal hand-sampling pool.
@@ -1261,14 +1261,14 @@ Payment Cancel (\texttt{X}) overlapped Settings button & Repositioned \texttt{\_
 % ==============================================================================
 \section{Conclusion}
 
-We designed, implemented, and verified \textbf{Resonance: Genius Invokation TCG (Avatar Edition)}, a complete tactical card game in Godot~4 backed by a deterministic data-driven rules engine, 116 passing automated tests, and a six-component AI architecture. By integrating Sugeno Fuzzy Logic, informed A* Lethal Planning, Iterative-Deepening Alpha-Beta with zero-cost Fast Action depth tracking, Shortlisted Determinized IS-MCTS, and MRV Forward-Checking CSP solvers, our AI agents handle hidden hands, stochastic dice, and multi-action turns without freezing the interface or peeking at hidden state. Both our step-by-step decision tree analysis and our 12-game tournament demonstrate that search and lethal planning decisively beat greedy play (6--0 vs.\ Easy), while Iterative-Deepening Alpha-Beta achieves the strongest overall balance of tactical accuracy (80\% win rate) and responsiveness (212~ms/move), complemented by IS-MCTS's strength in longer multi-round attrition matches.
+We designed, implemented, and verified \textbf{Resonance}, a complete tactical card game in Godot~4 backed by a deterministic data-driven rules engine, 116 passing automated tests, and a six-component AI architecture. By integrating Sugeno Fuzzy Logic, informed A* Lethal Planning, Iterative-Deepening Alpha-Beta with zero-cost Fast Action depth tracking, Shortlisted Determinized IS-MCTS, and MRV Forward-Checking CSP solvers, our AI agents handle hidden hands, stochastic dice, and multi-action turns without freezing the interface or peeking at hidden state. Both our step-by-step decision tree analysis and our 12-game tournament demonstrate that search and lethal planning decisively beat greedy play (6--0 vs.\ Easy), while Iterative-Deepening Alpha-Beta achieves the strongest overall balance of tactical accuracy (80\% win rate) and responsiveness (212~ms/move), complemented by IS-MCTS's strength in longer multi-round attrition matches.
 
 % ==============================================================================
 % REFERENCES
 % ==============================================================================
 \begin{thebibliography}{9}
 \footnotesize
-\setlength{\itemsep}{1pt}
+\setlength{\itemsep}{0pt}
 \setlength{\parskip}{0pt}
 \bibitem{russell}
 S.~Russell and P.~Norvig, \emph{Artificial Intelligence: A Modern Approach}, 4th~ed.\ Pearson, 2021.
@@ -1290,6 +1290,9 @@ C.~B.~Browne et al., ``A survey of Monte Carlo tree search methods,'' \emph{IEEE
 
 \bibitem{cowling}
 P.~I.~Cowling, E.~J.~Powley, and D.~Whitehouse, ``Information Set Monte Carlo Tree Search,'' \emph{IEEE Trans.\ Computational Intelligence and AI in Games}, vol.~4, no.~2, pp.~120--143, 2012.
+
+\bibitem{hoyoverse}
+miHoYo / HoYoverse, ``Genius Invokation TCG Gameplay Rules and System Guide,'' \emph{Genshin Impact Game Documentation}, Version~3.3, Dec.~2022. [Online]. Available: \url{https://genshin.hoyoverse.com}
 \end{thebibliography}
 
 \end{document}

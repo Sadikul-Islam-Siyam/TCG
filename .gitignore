@@ -3,8 +3,16 @@ build/
 *.exe
 *.pck
 
-# Local IDE / reference media
+# Local IDE / media / large presentation embeds
 .idea/
 .deck_build/
-*.mp4
 spash arts/
+
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.synctex.gz
+report/*.fls
+report/*.fdb_latexmk
